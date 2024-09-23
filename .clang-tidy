@@ -1,0 +1,11 @@
+Checks:
+    modernize-*,
+    portability-*,
+    cppcoreguidelines-*,
+    performance-*,
+    readability-*,
+    
+    bugprone-*,
+    misc-*,
+    google-*,
+
