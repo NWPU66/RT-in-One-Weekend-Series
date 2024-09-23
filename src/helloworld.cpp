@@ -1,16 +1,11 @@
-#include "util/std_include.h"
-
 #include "glm/matrix.hpp"
 #include "imgui.h"
-
-#include "core/ck_core.h"
+#include <glm/ext/matrix_float4x4.hpp>
+#include <iostream>
 
 int main(int argc, char** argv)
 {
     std::cout << "Hello World!" << std::endl;
-    std::cout << "Welcome to CookieKiss Render!" << std::endl;
-    auto m = glm::mat4(1.0f);
-    std::cout << glm::determinant(m) << std::endl;
-    IMGUI_CHECKVERSION();
+    glm::mat4x4 a(1);
     return 0;
 }

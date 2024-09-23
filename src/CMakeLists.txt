@@ -2,7 +2,7 @@ set(SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 
 # add sub directories
 subdirs(
-    #${CMAKE_CURRENT_SOURCE_DIR}/core
+    ${CMAKE_CURRENT_SOURCE_DIR}/RT_in_One_Weekend
 )
 
 # helloworld programe
@@ -14,6 +14,5 @@ target_include_directories(helloworld PRIVATE
     ${SRC_DIR})
 target_link_libraries(helloworld PRIVATE 
     imgui::imgui
-    util 
     glm::glm)
 install(TARGETS helloworld RUNTIME DESTINATION ./)
