@@ -1,0 +1,22 @@
+CompileFlags:
+    Add:
+    [
+        '-std=c++17',
+        '--cuda-gpu-arch=sm_61',
+        '--cuda-path=C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.8',
+        '-LC:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.8\lib\x64',
+        '-IC:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.8\include'
+    ]
+    Remove:
+    [
+        '-forward-unknown-to-host-compiler',
+        '--options-file',
+        '-Xcompiler= /EHsc',
+        '-Xcompiler= -Ob0 -Od /RTC1',
+        '--generate-code=arch=compute_52,code=[compute_52,sm_52]',
+        '-Xcompiler=-Zi',
+        '-Xcompiler=-MDd',
+        '-Xcompiler=-FdCMakeFiles\Ch2_Cuda_RayTracing.dir/,-FS',
+        '-Xcompiler=-FdCMakeFiles\Ch1_Add_Array_Use_CUDA.dir/,-FS',
+        '--generate-code=arch=compute_80,code=[compute_80,sm_80]'
+    ]

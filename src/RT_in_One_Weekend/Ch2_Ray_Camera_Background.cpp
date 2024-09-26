@@ -1,23 +1,39 @@
+#include <array>
+#include <cmath>
 #include <cstdlib>
 
+#include <chrono>
+#include <cstring>
 #include <fstream>
 #include <functional>
+#include <glm/geometric.hpp>
 #include <iostream>
 #include <limits>
 #include <memory>
 #include <random>
 #include <string>
+#include <thread>
 
 #include "util/util.h"
 
 const std::string OUTPUT_FILE = "output.ppm";
 
-vec3 ray_color(const ray& r, const hittable_list& world)
+vec3 ray_color(const ray& r, const hittable_list& world, int depth)
 {
     hit_record rec;
-    if (world.hit(r, 0.01, std::numeric_limits<double>::max(), rec))
+
+    if (depth <= 0) { return vec3(0); }
+
+    if (world.hit(r, 0.001, std::numeric_limits<double>::max(), rec))
     {
-        return 0.5 * (rec.normal + vec3(1));
+        ray  scattered;
+        vec3 attenuation;
+
+        if (rec.mat_ptr->scatter(r, rec.p, rec.normal, rec.front_face, attenuation, scattered))
+        {
+            return attenuation * ray_color(scattered, world, depth - 1);
+        }
+        return vec3(0);
     }
 
     vec3 unit_direction = glm::normalize(r.direction());
@@ -25,19 +41,15 @@ vec3 ray_color(const ray& r, const hittable_list& world)
     return (1.0 - t) * vec3(1.0, 1.0, 1.0) + t * vec3(0.5, 0.7, 1.0);
 }
 
-inline double random_double()
-{
-    static std::uniform_real_distribution<double> distribution(0.0, 1.0);
-    static std::mt19937                           generator;
-    static std::function<double()> rand_generator = std::bind(distribution, generator);
-    return rand_generator();
-}
-
 int main(int argc, char** argv)
 {
-    const int image_width       = 200;
-    const int image_height      = 100;
-    const int samples_per_pixel = 100;
+    const int image_width       = 720;
+    const int image_height      = 360;
+    const int samples_per_pixel = 64;
+    const int max_depth         = 16;
+
+    // image
+    vec3* image = new vec3[image_height * image_width];
 
     std::ofstream out(OUTPUT_FILE);
     if (!out.is_open())
@@ -47,118 +59,85 @@ int main(int argc, char** argv)
     }
     out << "P3\n" << image_width << ' ' << image_height << "\n255\n";
 
-    hittable_list world;
-    world.add(std::make_shared<sphere>(vec3(0, 0, -1), 0.5));
-    world.add(std::make_shared<sphere>(vec3(0, -100.5, -1), 100));
-    camera cam;
+    const auto aspect_ratio = double(image_width) / image_height;
+    vec3       lookfrom(3, 3, 2);
+    vec3       lookat(0, 0, -1);
+    vec3       vup(0, 1, 0);
+    auto       dist_to_focus = glm::length(lookfrom - lookat);
+    auto       aperture      = 2.0;
+    camera     cam(lookfrom, lookat, vup, 20, aspect_ratio, aperture, dist_to_focus);
 
+    hittable_list world;
+    world.add(std::make_shared<sphere>(vec3(0, 0, -1), 0.5,
+                                       std::make_shared<lambertian>(vec3(1.0, 0.2, 0.5))));
+    world.add(std::make_shared<sphere>(vec3(0, -100.5, -1), 100,
+                                       std::make_shared<lambertian>(vec3(0.8, 0.8, 0.0))));
+    world.add(std::make_shared<sphere>(vec3(1, 0, -1), 0.5,
+                                       std::make_shared<metal>(vec3(0.8, 0.6, 0.2), 0.3)));
+    world.add(std::make_shared<sphere>(vec3(-1, 0, -1), 0.5, std::make_shared<dielectric>(1.5)));
+    world.add(std::make_shared<sphere>(vec3(-1, 0, -1), -0.45, std::make_shared<dielectric>(1.5)));
+
+    // debug
+    // ray_color(ray(vec3(0), vec3(-1, -0.53, -1)), world, max_depth);
+
+    for (const int test : {1})
+    {
+        // time
+        auto start = std::chrono::system_clock::now();
+
+        // muti thread
+        const int num_threads    = test;
+        const int row_per_thread = ceil(image_height / (float)num_threads);
+
+        std::function<void(int)> thread_fn = [&](int thread_id) {
+            for (int j = image_height - 1 - thread_id * row_per_thread;
+                 j > image_height - 1 - (thread_id + 1) * row_per_thread; --j)
+            {
+                std::cout << "\rScanlines remaining[" << thread_id
+                          << "]: " << j - (image_height - 1 - (thread_id + 1) * row_per_thread)
+                          << ' ' << std::flush;
+                for (int i = 0; i < image_width; ++i)
+                {
+                    vec3 color(0);
+                    for (int s = 0; s < samples_per_pixel; ++s)
+                    {
+                        auto u = (i + random_double()) / image_width;
+                        auto v = (j + random_double()) / image_height;
+
+                        color += ray_color(cam.get_ray(u, v), world, max_depth);
+                    }
+                    // write_color(out, color, samples_per_pixel);
+                    image[j * image_width + i] = color;
+                }
+            }
+        };
+
+        // create threads
+        std::thread th[num_threads];
+        for (int i = 0; i < num_threads; ++i)
+        {
+            th[i] = std::thread(thread_fn, i);
+        }
+        for (int i = 0; i < num_threads; ++i)
+        {
+            th[i].join();  // join threads
+        }
+
+        // time
+        auto end      = std::chrono::system_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::seconds>(end - start);
+        std::cout << "[" << test << "]Time taken: " << duration.count() << " seconds\n";
+    }
+
+    // write image to ppm
     for (int j = image_height - 1; j >= 0; --j)
     {
-        std::cout << "\rScanlines remaining: " << j << ' ' << std::flush;
         for (int i = 0; i < image_width; ++i)
         {
-            vec3 color(0);
-            for (int s = 0; s < samples_per_pixel; ++s)
-            {
-                auto u = (i + random_double()) / image_width;
-                auto v = (j + random_double()) / image_height;
-
-                color += ray_color(cam.get_ray(u, v), world);
-            }
-            write_color(out, color, samples_per_pixel);
+            write_color(out, image[j * image_width + i], samples_per_pixel);
         }
     }
     std::cout << "\nDone.\n";
 
     return EXIT_SUCCESS;
 }
-
-// #include <cstdlib>
-// #include <stdexcept>
-
-// #include <fstream>
-// #include <iostream>
-// #include <string>
-
-// #include <glm/geometric.hpp>
-
-// #define HIGH_PRECISION
-// #include "marco.h"
-// #include "ray.h"
-
-// const std::string OUTPUT_FILE = "output.ppm";
-
-// double hit_sphere(const vec3& center, double radius, const ray& r)
-// {
-//     vec3 oc           = r.origin() - center;
-//     auto a            = dot(r.direction(), r.direction());
-//     auto b            = 2.0 * dot(oc, r.direction());
-//     auto c            = dot(oc, oc) - radius * radius;
-//     auto discriminant = b * b - 4 * a * c;
-
-//     if (discriminant < 0) { return -1.0; }
-//     else
-//     {
-//         // 返回交点中的较小值，有可能是负的
-//         return (-b - sqrt(discriminant)) / (2.0 * a);
-//     }
-// }
-
-// vec3 ray_color(const ray& r)
-// {
-//     const vec3   sphere_center = vec3(0, 0, -1);
-//     const double sphere_radius = 0.5;
-
-//     auto t = hit_sphere(sphere_center, sphere_radius, r);
-//     if (t > 0.0)
-//     {
-//         vec3 N = glm::normalize(r.at(t) - sphere_center);
-//         return 0.5 * (N + vec3(1));
-//     }
-
-//     vec3 unit_direction = glm::normalize(r.direction());
-//     t                   = 0.5 * (unit_direction.y + 1.0);
-//     return (1.0 - t) * vec3(1.0, 1.0, 1.0) + t * vec3(0.5, 0.7, 1.0);
-// }
-
-// int main(int argc, char** argv)
-// {
-//     try
-//     {
-//         const int image_width  = 200;
-//         const int image_height = 100;
-
-//         const vec3 lower_left_corner(-2.0, -1.0, -1.0);
-//         const vec3 horizontal(4.0, 0.0, 0.0);
-//         const vec3 vertical(0.0, 2.0, 0.0);
-//         const vec3 origin(0.0, 0.0, 0.0);
-
-//         std::ofstream out(OUTPUT_FILE);
-//         out.is_open();
-//         out << "P3\n" << image_width << " " << image_height << "\n255\n";
-//         for (int j = image_height - 1; j >= 0; --j)
-//         {
-//             for (int i = 0; i < image_width; ++i)
-//             {
-//                 std::cout << "\rScanlines remaining: " << j << ' ' << std::flush;
-
-//                 auto u = double(i) / image_width;
-//                 auto v = double(j) / image_height;
-//                 ray  r(origin, lower_left_corner + u * horizontal + v * vertical);
-//                 vec3 color = ray_color(r);
-
-//                 out << (int)(255.999 * color.x) << " " << (int)(255.999 * color.y) << " "
-//                     << (int)(255.999 * color.z) << "\n";
-//             }
-//         }
-
-//         std::cout << "\nDone.\n";
-//     }
-//     catch (std::runtime_error& e)
-//     {
-//         std::cerr << e.what() << std::endl;
-//         return EXIT_FAILURE;
-//     }
-
-//     return EXIT_SUCCESS;
-// }

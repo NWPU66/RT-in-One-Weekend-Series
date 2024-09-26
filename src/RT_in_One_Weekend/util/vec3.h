@@ -1,6 +1,10 @@
 #pragma once
 #include <iostream>
 
+#include "marco.h"
+
+#include "util.h"
+
 namespace unused {
 
 class vec3 {
@@ -100,4 +104,6 @@ inline vec3 unit_vector(vec3 v)
     return v / v.length();
 }
 
-}  // namespace unsued
+}  // namespace unused
+
+

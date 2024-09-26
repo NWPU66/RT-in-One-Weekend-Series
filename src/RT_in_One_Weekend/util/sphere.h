@@ -1,22 +1,23 @@
 #pragma once
-
 #include "glm/glm.hpp"
-#include <glm/exponential.hpp>
-#include <glm/geometric.hpp>
+#include <memory>
+
+#include "marco.h"
 
 #include "hittable.h"
-#include "marco.h"
+#include "material.h"
 
 class sphere : public hittable {
 public:
     sphere() = default;
-    sphere(vec3 cen, double r) : center(cen), radius(r) {};
+    sphere(vec3 cen, double r, std::shared_ptr<material> m) : center(cen), radius(r), mat_ptr(m) {};
 
     virtual bool hit(const ray& r, double tmin, double tmax, hit_record& rec) const;
 
 public:
-    vec3   center;
-    double radius;
+    vec3                      center;
+    double                    radius;
+    std::shared_ptr<material> mat_ptr;
 };
 
 bool sphere::hit(const ray& r, double t_min, double t_max, hit_record& rec) const
@@ -35,8 +36,9 @@ bool sphere::hit(const ray& r, double t_min, double t_max, hit_record& rec) cons
         {
             rec.t               = t;
             rec.p               = r.at(t);
-            vec3 outward_normal = glm::normalize(rec.p - center);
+            vec3 outward_normal = (rec.p - center) / vec3(radius);
             rec.set_face_normal(r, outward_normal);
+            rec.mat_ptr = mat_ptr;
             return true;
         }
         t = (-b + root) / (2 * a);
@@ -44,8 +46,9 @@ bool sphere::hit(const ray& r, double t_min, double t_max, hit_record& rec) cons
         {
             rec.t               = t;
             rec.p               = r.at(t);
-            vec3 outward_normal = glm::normalize(rec.p - center);
+            vec3 outward_normal = (rec.p - center) / vec3(radius);
             rec.set_face_normal(r, outward_normal);
+            rec.mat_ptr = mat_ptr;
             return true;
         }
     }

@@ -10,7 +10,7 @@ project(RT-in-One-Weekend-Series
     VERSION 0.1.0
     DESCRIPTION "RT-in-One-Weekend-Series"
     HOMEPAGE_URL "https://github.com/NWPU66/RT-in-One-Weekend-Series"
-    LANGUAGES CXX)
+    LANGUAGES CXX CUDA)
 
 # add subdirectory
 subdirs(${CMAKE_CURRENT_SOURCE_DIR}/3rdparty)
