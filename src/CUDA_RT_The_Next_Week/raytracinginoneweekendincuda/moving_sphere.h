@@ -61,8 +61,8 @@ __device__ vec3 moving_sphere::center(float time) const
 
 __device__ bool moving_sphere::bounding_box(float t0, float t1, aabb& output_box) const
 {
-    aabb box0(center(t0) - vec3(radius), center(t0) + vec3(radius));
-    aabb box1(center(t1) - vec3(radius), center(t1) + vec3(radius));
+    aabb box0(center(t0) - vec3(abs(radius)), center(t0) + vec3(abs(radius)));
+    aabb box1(center(t1) - vec3(abs(radius)), center(t1) + vec3(abs(radius)));
     output_box = surrounding_box(box0, box1);
     return true;
 }
