@@ -49,7 +49,7 @@ template <int axis> __device__ inline bool box_compare(const hitable* a, const h
         // TODO - 该代码在GPU中，要向CPU发回错误信息
     }
 
-    return box1.min().e[axis] < box2.min().e[axis];
+    return box1.min().e[axis] <= box2.min().e[axis];
 }
 
 __host__ __device__ void
@@ -126,6 +126,11 @@ __device__ bvh_node::bvh_node(hitable**    list,
         default: {  // 先序遍历创建bvh tree
             bubble_sort2(list, start, end, comparator);
 
+            // test sort result
+            bool t1=comparator(list[start], list[start + 1]);
+            bool t2=comparator(list[start + 1], list[start + 2]);
+            bool t3=comparator(list[start + 2], list[start + 3]);
+
             auto mid = (start + end) / 2;
 
             left  = new bvh_node(list, start, mid, time0, time1, rand_state);
@@ -142,6 +147,10 @@ __device__ bvh_node::bvh_node(hitable**    list,
             }
             box = surrounding_box(box_left, box_right);
 
+            //test bounding box 
+            vec3 a = box.min();
+            vec3 b = box.max();
+
             break;
         }
     }
@@ -149,6 +158,10 @@ __device__ bvh_node::bvh_node(hitable**    list,
 
 __device__ bool bvh_node::hit(const ray& r, float t_min, float t_max, hit_record& rec) const
 {
+    //test 
+    vec3 a = box.min();
+    vec3 b = box.max();
+
     if (!box.hit(r, t_min, t_max)) { return false; }
 
     if (object)

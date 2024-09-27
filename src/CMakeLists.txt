@@ -2,8 +2,8 @@ set(SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 
 # add sub directories
 subdirs(
-    ${CMAKE_CURRENT_SOURCE_DIR}/RT_in_One_Weekend
-    ${CMAKE_CURRENT_SOURCE_DIR}/CUDA_RT_in_One_Weekend
+    # ${CMAKE_CURRENT_SOURCE_DIR}/RT_in_One_Weekend
+    # ${CMAKE_CURRENT_SOURCE_DIR}/CUDA_RT_in_One_Weekend
     ${CMAKE_CURRENT_SOURCE_DIR}/CUDA_RT_The_Next_Week
 )
 

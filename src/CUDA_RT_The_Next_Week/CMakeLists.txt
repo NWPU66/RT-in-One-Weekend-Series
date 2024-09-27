@@ -1,7 +1,7 @@
 # subdirs(${CMAKE_CURRENT_SOURCE_DIR}/util)
 
 # libraries
-find_package(glm CONFIG REQUIRED)
+# find_package(glm CONFIG REQUIRED)
 
 # cuda compiler
 enable_language(CUDA)
@@ -9,6 +9,8 @@ enable_language(CUDA)
 # file(GLOB_RECURSE CUDA_LIBS "E:/cuda118_x64_lib/*.lib")
 # message(${CUDA_LIBS})
 # link_directories(${CUDA_ROOT}/lib/x64)
+
+# set(NVCC_FLAGS -g -G)
 
 file(GLOB UTIL_SRC ${CMAKE_CURRENT_SOURCE_DIR}/*.cuh)
 
@@ -28,7 +30,7 @@ foreach(CH_FILE ${CH_FILES})
         )
     #添加链接库
     target_link_libraries(${CH_FILE_NAME} PRIVATE 
-        glm::glm
+        # glm::glm
         # ${CUDA_LIBS}
         )
     #安装

@@ -170,6 +170,9 @@ __global__ void create_world(hitable**    d_list,
 
         // create the bvh tree
         *d_bvh = new bvh_node(d_list, 0, n_objects, time0, time1, rand_state);
+
+        hit_record rec;
+        (**d_bvh).hit(ray(vec3(0), vec3(0, -0.5, -1), 0), 0.0001, FLT_MAX, rec);
     }
 }
 
