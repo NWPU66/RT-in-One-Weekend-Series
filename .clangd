@@ -18,5 +18,7 @@ CompileFlags:
         '-Xcompiler=-MDd',
         '-Xcompiler=-FdCMakeFiles\Ch2_Cuda_RayTracing.dir/,-FS',
         '-Xcompiler=-FdCMakeFiles\Ch1_Add_Array_Use_CUDA.dir/,-FS',
-        '--generate-code=arch=compute_80,code=[compute_80,sm_80]'
+        '--generate-code=arch=compute_80,code=[compute_80,sm_80]',
+        '-Xcompiler=-FdCMakeFiles\Ch1_CUDA_Dynamic_Blur.dir/,-FS',
+        '-Xcompiler=-FdCMakeFiles\Ch2_CUDA_BVH.dir/,-FS'
     ]

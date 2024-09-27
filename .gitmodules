@@ -1,0 +1,4 @@
+[submodule "raytracinginoneweekendincuda"]
+	path = raytracinginoneweekendincuda
+	url = https://github.com/rogerallen/raytracinginoneweekendincuda.git
+	branch = ch12_where_next_cuda
