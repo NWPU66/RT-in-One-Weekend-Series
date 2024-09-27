@@ -1,6 +1,8 @@
 #ifndef SPHEREH
 #define SPHEREH
 
+#include <cmath>
+
 #include "aabb.h"
 #include "hitable.h"
 
@@ -50,7 +52,7 @@ __device__ bool sphere::hit(const ray& r, float t_min, float t_max, hit_record& 
 
 __device__ bool sphere::bounding_box(float t0, float t1, aabb& output_box) const
 {
-    output_box = aabb(center - vec3(radius), center + vec3(radius));
+    output_box = aabb(center - vec3(abs(radius)), center + vec3(abs(radius)));
     return true;
 }
 

@@ -49,7 +49,7 @@ template <int axis> __device__ inline bool box_compare(const hitable* a, const h
         // TODO - 该代码在GPU中，要向CPU发回错误信息
     }
 
-    return box1.min().e[axis] < box2.min().e[axis];
+    return box1.min().e[axis] <= box2.min().e[axis];
 }
 
 __host__ __device__ void

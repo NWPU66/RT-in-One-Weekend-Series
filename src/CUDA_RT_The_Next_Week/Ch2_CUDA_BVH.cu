@@ -93,6 +93,7 @@ __global__ void render(vec3*        fb,
                        int          ns,
                        camera**     cam,
                        hitable**    world,
+                       hitable**    bvh,
                        curandState* rand_state)
 {
     int i = threadIdx.x + blockIdx.x * blockDim.x;
@@ -106,7 +107,8 @@ __global__ void render(vec3*        fb,
         float u = float(i + curand_uniform(&local_rand_state)) / float(max_x);
         float v = float(j + curand_uniform(&local_rand_state)) / float(max_y);
         ray   r = (*cam)->get_ray(u, v, &local_rand_state);
-        col += color(r, world, &local_rand_state);
+        // col += color(r, world, &local_rand_state);
+        col += color(r, bvh, &local_rand_state);
     }
     rand_state[pixel_index] = local_rand_state;
     col /= float(ns);
@@ -170,6 +172,9 @@ __global__ void create_world(hitable**    d_list,
 
         // create the bvh tree
         *d_bvh = new bvh_node(d_list, 0, n_objects, time0, time1, rand_state);
+
+        // hit_record rec;
+        // (**d_bvh).hit(ray(vec3(0), vec3(0, -0.5, -1), 0), 0.0001, FLT_MAX, rec);
     }
 }
 
@@ -239,7 +244,7 @@ int main()
     render_init<<<blocks, threads>>>(nx, ny, d_rand_state);
     checkCudaErrors(cudaGetLastError());
     checkCudaErrors(cudaDeviceSynchronize());
-    render<<<blocks, threads>>>(fb, nx, ny, ns, d_camera, d_world, d_rand_state);
+    render<<<blocks, threads>>>(fb, nx, ny, ns, d_camera, d_world, d_bvh, d_rand_state);
     checkCudaErrors(cudaGetLastError());
     checkCudaErrors(cudaDeviceSynchronize());
     auto stop     = std::chrono::system_clock::now();

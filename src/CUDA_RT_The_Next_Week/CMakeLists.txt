@@ -10,6 +10,13 @@ enable_language(CUDA)
 # message(${CUDA_LIBS})
 # link_directories(${CUDA_ROOT}/lib/x64)
 
+# set(NVCC_FLAGS -g -G)
+# NOTE - nvidia nsight vscode 调试要点
+# 首先，编译：使用nvcc编译时要加上“-g -G”，-g：将c++代码编译成可调式的版本，-G则针对cuda代码
+# 其次，在vscode上配置launch.json文件，申明debuggerPath：cuda-gdb和program
+# 最后按下小按钮即可
+# 另外，没有使用-G编译的cuda代码，调试的时候会跳过cuda的部分
+
 file(GLOB UTIL_SRC ${CMAKE_CURRENT_SOURCE_DIR}/*.cuh)
 
 file(GLOB_RECURSE CH_FILES ${CMAKE_CURRENT_SOURCE_DIR}/Ch*)
