@@ -93,7 +93,7 @@ __global__ void render(vec3*        fb,
                        int          ns,
                        camera**     cam,
                        hitable**    world,
-                       hitable** bvh,
+                       hitable**    bvh,
                        curandState* rand_state)
 {
     int i = threadIdx.x + blockIdx.x * blockDim.x;
