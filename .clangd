@@ -20,5 +20,8 @@ CompileFlags:
         '-Xcompiler=-FdCMakeFiles\Ch1_Add_Array_Use_CUDA.dir/,-FS',
         '--generate-code=arch=compute_80,code=[compute_80,sm_80]',
         '-Xcompiler=-FdCMakeFiles\Ch1_CUDA_Dynamic_Blur.dir/,-FS',
-        '-Xcompiler=-FdCMakeFiles\Ch2_CUDA_BVH.dir/,-FS'
+        '-Xcompiler=-FdCMakeFiles\Ch2_CUDA_BVH.dir/,-FS',
+        '-Xcompiler=-FdCMakeFiles\Ch2_CUDA_Texture.dir/,-FS',
+        '-Xcompiler=-FdCMakeFiles\Ch3_CUDA_Texture.dir/,-FS',
+        '-Xcompiler=-FdCMakeFiles\Ch4_CUDA_Cornell_Box.dir/,-FS'
     ]

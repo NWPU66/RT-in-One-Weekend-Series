@@ -3,13 +3,15 @@
 
 // cpp
 #include <chrono>
+#include <cuda_runtime_api.h>
 #include <fstream>
 #include <iostream>
+#include <memory>
+#include <string>
 
 // cuda
 #include "cuda_runtime.h"
 #include "curand_kernel.h"
-#include "device_launch_parameters.h"
 
 // user
 #include "raytracinginoneweekendincuda/bvh.h"
@@ -18,10 +20,19 @@
 #include "raytracinginoneweekendincuda/hitable_list.h"
 #include "raytracinginoneweekendincuda/material.h"
 #include "raytracinginoneweekendincuda/moving_sphere.h"
+#include "raytracinginoneweekendincuda/perlin.h"
 #include "raytracinginoneweekendincuda/ray.h"
+#include "raytracinginoneweekendincuda/rectangle.h"
 #include "raytracinginoneweekendincuda/sphere.h"
+#include "raytracinginoneweekendincuda/texture.h"
 #include "raytracinginoneweekendincuda/util.h"
 #include "raytracinginoneweekendincuda/vec3.h"
+
+// 3rdparty
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
+
+const std::string IMAGE_FILE = "E:/Study/CodeProj/RT-in-One-Weekend-Series/asset/world.jpg";
 
 #define checkCudaErrors(val) check_cuda((val), #val, __FILE__, __LINE__)
 void check_cuda(cudaError_t result, char const* const func, const char* const file, int const line)
@@ -69,6 +80,49 @@ __device__ vec3 color(const ray& r, hitable** world, curandState* local_rand_sta
     return vec3(0.0, 0.0, 0.0);  // exceeded recursion
 }
 
+__device__ vec3 ray_color(const ray& r,
+
+                          hitable**    world,
+                          curandState* local_rand_state,
+                          const vec3&  background = {0})
+{
+    ray  cur_ray         = r;
+    vec3 cur_attenuation = vec3(1);
+    for (int i = 0; i < 50; i++)
+    {
+        hit_record rec;
+        if ((*world)->hit(cur_ray, 0.001f, FLT_MAX, rec))
+        {
+            ray  scattered;
+            vec3 attenuation;
+
+            vec3 emitted = rec.mat_ptr->emitted(rec.u, rec.v, rec.p);
+            if (dot(cur_ray.direction(), rec.normal) < 0) { emitted = vec3{0}; }
+
+            if (rec.mat_ptr->scatter(cur_ray, rec, attenuation, scattered, local_rand_state))
+            {
+                cur_attenuation *= attenuation;
+                cur_ray = scattered;
+            }
+            else
+            {
+                // 自发光材质，没有scatter
+                return cur_attenuation * emitted;
+            }
+        }
+        else
+        {
+            // sky light
+            vec3  unit_direction = unit_vector(cur_ray.direction());
+            float t              = 0.5f * (unit_direction.y() + 1.0f);
+            vec3  sky_light      = (1.0f - t) * vec3(1.0, 1.0, 1.0) + t * vec3(0.5, 0.7, 1.0);
+
+            return cur_attenuation * (background + sky_light * 0.05);
+        }
+    }
+    return vec3(0);  // exceeded recursion
+}
+
 __global__ void rand_init(curandState* rand_state)
 {
     if (threadIdx.x == 0 && blockIdx.x == 0) { curand_init(1984, 0, 0, rand_state); }
@@ -93,7 +147,6 @@ __global__ void render(vec3*        fb,
                        int          ns,
                        camera**     cam,
                        hitable**    world,
-                       hitable**    bvh,
                        curandState* rand_state)
 {
     int i = threadIdx.x + blockIdx.x * blockDim.x;
@@ -108,7 +161,7 @@ __global__ void render(vec3*        fb,
         float v = float(j + curand_uniform(&local_rand_state)) / float(max_y);
         ray   r = (*cam)->get_ray(u, v, &local_rand_state);
         // col += color(r, world, &local_rand_state);
-        col += color(r, bvh, &local_rand_state);
+        col += ray_color(r, world, &local_rand_state);
     }
     rand_state[pixel_index] = local_rand_state;
     col /= float(ns);
@@ -117,20 +170,26 @@ __global__ void render(vec3*        fb,
 
 #define RND (curand_uniform(&local_rand_state))
 
-__global__ void create_world(hitable**    d_list,
-                             hitable**    d_world,
-                             hitable**    d_bvh,
-                             camera**     d_camera,
-                             int          nx,
-                             int          ny,
-                             int          n_objects,
-                             curandState* rand_state)
+__global__ void create_world(hitable**      d_list,
+                             hitable**      d_world,
+                             camera**       d_camera,
+                             int            nx,
+                             int            ny,
+                             int            n_objects,
+                             unsigned char* texture_device_data,
+                             int            texture_width,
+                             int            texture_height,
+                             curandState*   rand_state)
 {
     if (threadIdx.x == 0 && blockIdx.x == 0)
     {
         curandState local_rand_state = *rand_state;
-        d_list[0] = new sphere(vec3(0, -1000.0, -1), 1000, new lambertian(vec3(0.5, 0.5, 0.5)));
-        int i     = 1;
+
+        auto checker = new checker_texture(new const_texture(vec3(0.2, 0.3, 0.1)),
+                                           new const_texture(vec3(0.9, 0.9, 0.9)));
+        d_list[0]    = new sphere(vec3(0, -1000.0, -1), 1000, new lambertian(checker));
+
+        int i = 1;
         for (int a = -11; a < 11; a++)
         {
             for (int b = -11; b < 11; b++)
@@ -139,8 +198,9 @@ __global__ void create_world(hitable**    d_list,
                 vec3  center(a + RND, 0.2, b + RND);
                 if (choose_mat < 0.8f)
                 {
-                    d_list[i++] = new sphere(center, 0.2,
-                                             new lambertian(vec3(RND * RND, RND * RND, RND * RND)));
+                    d_list[i++] = new sphere(
+                        center, 0.2,
+                        new lambertian(new const_texture(vec3(RND * RND, RND * RND, RND * RND))));
                     // new moving_sphere(center, center + vec3(0, RND * 0.5, 0), 0.0, 1.0, 0.2,
                     //                   new lambertian(vec3(RND * RND, RND * RND, RND * RND)));
                 }
@@ -155,12 +215,20 @@ __global__ void create_world(hitable**    d_list,
                 else { d_list[i++] = new sphere(center, 0.2, new dielectric(1.5)); }
             }
         }
+
+        auto noise_tex = new noise_texture(1.0f, &local_rand_state);
+        auto earth_tex = new image_texture(texture_device_data, texture_width, texture_height);
+
         d_list[i++] = new sphere(vec3(0, 1, 0), 1.0, new dielectric(1.5));
         d_list[i++] = new sphere(vec3(0, 1, 0), -0.95, new dielectric(1.5));
-        d_list[i++] = new sphere(vec3(-4, 1, 0), 1.0, new lambertian(vec3(0.4, 0.2, 0.1)));
+        d_list[i++] = new sphere(vec3(-4, 1, 0), 1.0, new lambertian(earth_tex));
         d_list[i++] = new sphere(vec3(4, 1, 0), 1.0, new metal(vec3(0.7, 0.6, 0.5), 0.0));
-        *rand_state = local_rand_state;
-        *d_world    = new hitable_list(d_list, n_objects);
+
+        // rectangle light
+        auto difflight = new diffuse_light(new const_texture(vec3(4)));
+        d_list[i++]    = new xy_rect(3, 5, 1, 3, -2, difflight);
+
+        *d_world = new hitable_list(d_list, n_objects);
 
         vec3  lookfrom(13, 2, 3);
         vec3  lookat(0, 0, 0);
@@ -169,16 +237,10 @@ __global__ void create_world(hitable**    d_list,
         float time0 = 0.0, time1 = 1.0;
         *d_camera = new camera(lookfrom, lookat, vec3(0, 1, 0), 30.0, float(nx) / float(ny),
                                aperture, dist_to_focus, time0, time1);
-
-        // create the bvh tree
-        *d_bvh = new bvh_node(d_list, 0, n_objects, time0, time1, rand_state);
-
-        // hit_record rec;
-        // (**d_bvh).hit(ray(vec3(0), vec3(0, -0.5, -1), 0), 0.0001, FLT_MAX, rec);
     }
 }
 
-__global__ void free_world(hitable** d_list, hitable** d_world, camera** d_camera, hitable** d_bvh)
+__global__ void free_world(hitable** d_list, hitable** d_world, camera** d_camera)
 {
     for (int i = 0; i < 22 * 22 + 1 + 4; i++)  // NOTE -
     {
@@ -187,7 +249,6 @@ __global__ void free_world(hitable** d_list, hitable** d_world, camera** d_camer
         delete d_list[i];
     }
     delete *d_world;
-    delete *d_bvh;
     delete *d_camera;
 }
 
@@ -195,7 +256,7 @@ int main()
 {
     const int         nx          = 1200;
     const int         ny          = 800;
-    const int         ns          = 16;
+    const int         ns          = 128;
     const int         tx          = 8;
     const int         ty          = 8;
     const std::string OUTPUT_FILE = "output.ppm";
@@ -210,6 +271,15 @@ int main()
     vec3* fb;
     checkCudaErrors(cudaMallocManaged((void**)&fb, fb_size));
 
+    // import image to cuda
+    int            width, height, channels;
+    unsigned char* texture_host_data = stbi_load(IMAGE_FILE.c_str(), &width, &height, &channels, 0);
+    int            texture_size      = width * height * channels;
+    unsigned char* texture_device_data;
+    checkCudaErrors(cudaMallocManaged((void**)&texture_device_data, texture_size));
+    checkCudaErrors(
+        cudaMemcpy(texture_device_data, texture_host_data, texture_size, cudaMemcpyHostToDevice));
+
     // allocate random state
     curandState* d_rand_state;
     checkCudaErrors(cudaMalloc((void**)&d_rand_state, num_pixels * sizeof(curandState)));
@@ -222,7 +292,7 @@ int main()
     checkCudaErrors(cudaDeviceSynchronize());
 
     // NOTE - num of objects
-    const int     small = 22 * 22, big = 4, ground = 1;
+    const int     small = 22 * 22, big = 5, ground = 1;
     constexpr int total = small + big + ground;
 
     // make our world of hitables & the camera
@@ -232,9 +302,8 @@ int main()
     checkCudaErrors(cudaMalloc((void**)&d_world, sizeof(hitable*)));
     camera** d_camera;
     checkCudaErrors(cudaMalloc((void**)&d_camera, sizeof(camera*)));
-    hitable** d_bvh;
-    checkCudaErrors(cudaMalloc((void**)&d_bvh, sizeof(hitable*)));
-    create_world<<<1, 1>>>(d_list, d_world, d_bvh, d_camera, nx, ny, total, d_rand_state2);
+    create_world<<<1, 1>>>(d_list, d_world, d_camera, nx, ny, total, texture_device_data, width,
+                           height, d_rand_state2);
     checkCudaErrors(cudaGetLastError());
     checkCudaErrors(cudaDeviceSynchronize());
 
@@ -245,7 +314,7 @@ int main()
     render_init<<<blocks, threads>>>(nx, ny, d_rand_state);
     checkCudaErrors(cudaGetLastError());
     checkCudaErrors(cudaDeviceSynchronize());
-    render<<<blocks, threads>>>(fb, nx, ny, ns, d_camera, d_world, d_bvh, d_rand_state);
+    render<<<blocks, threads>>>(fb, nx, ny, ns, d_camera, d_world, d_rand_state);
     checkCudaErrors(cudaGetLastError());
     checkCudaErrors(cudaDeviceSynchronize());
     auto stop     = std::chrono::system_clock::now();
@@ -273,15 +342,16 @@ int main()
 
     // clean up
     checkCudaErrors(cudaDeviceSynchronize());
-    free_world<<<1, 1>>>(d_list, d_world, d_camera, d_bvh);
+    free_world<<<1, 1>>>(d_list, d_world, d_camera);
     checkCudaErrors(cudaGetLastError());
     checkCudaErrors(cudaFree(d_camera));
     checkCudaErrors(cudaFree(d_world));
-    checkCudaErrors(cudaFree(d_bvh));
     checkCudaErrors(cudaFree(d_list));
     checkCudaErrors(cudaFree(d_rand_state));
     checkCudaErrors(cudaFree(d_rand_state2));
     checkCudaErrors(cudaFree(fb));
+    delete[] texture_host_data;
+    checkCudaErrors(cudaFree(texture_device_data));
 
     cudaDeviceReset();
 

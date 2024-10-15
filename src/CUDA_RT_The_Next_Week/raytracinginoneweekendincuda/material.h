@@ -1,12 +1,12 @@
 #ifndef MATERIALH
 #define MATERIALH
 
-struct hit_record;
-
 #include <curand_kernel.h>
 
 #include "hitable.h"
 #include "ray.h"
+#include "texture.h"
+#include "vec3.h"
 
 __device__ float schlick(float cosine, float ref_idx)
 {
@@ -55,24 +55,37 @@ public:
                                     vec3&             attenuation,
                                     ray&              scattered,
                                     curandState*      local_rand_state) const = 0;
+
+    __device__ virtual vec3 emitted(double u, double v, const vec3& p) const { return vec3(0); }
+
+    __device__ virtual ~material() {}
+    /**FIXME - ~material() = default 问题
+     被显式申明为default的函数，在NVCC10版本后，会自动忽略__device__
+     */
 };
 
 class lambertian : public material {
 public:
-    __device__              lambertian(const vec3& a) : albedo(a) {}
+    __device__              lambertian(Texture* a) : albedo(a) {}
+    __device__              lambertian(const vec3& a) : albedo(new const_texture(a)) {}
     __device__ virtual bool scatter(const ray&        r_in,
                                     const hit_record& rec,
                                     vec3&             attenuation,
                                     ray&              scattered,
                                     curandState*      local_rand_state) const
     {
-        vec3 target = rec.p + rec.normal + random_in_unit_sphere(local_rand_state);
+        vec3 normal =
+            (dot(rec.normal, r_in.direction()) < 0) ? rec.normal : -rec.normal;  // double face
+
+        vec3 target = rec.p + normal + random_in_unit_sphere(local_rand_state);
         scattered   = ray(rec.p, target - rec.p, r_in.time());
-        attenuation = albedo;
+        attenuation = albedo->value(rec.u, rec.v, rec.p);
         return true;
     }
 
-    vec3 albedo;
+    __device__ virtual ~lambertian() { delete albedo; }
+
+    Texture* albedo;
 };
 
 class metal : public material {
@@ -94,8 +107,11 @@ public:
         scattered =
             ray(rec.p, reflected + fuzz * random_in_unit_sphere(local_rand_state), r_in.time());
         attenuation = albedo;
-        return (dot(scattered.direction(), rec.normal) > 0.0f);
+        return (dot(scattered.direction(), rec.normal) > 0.0f);  // double face protection
     }
+
+    __device__ virtual ~metal() {}
+
     vec3  albedo;
     float fuzz;
 };
@@ -140,6 +156,29 @@ public:
         return true;
     }
 
+    __device__ virtual ~dielectric() {}
+
     float ref_idx;
 };
+
+class diffuse_light : public material {
+public:
+    __device__ diffuse_light(Texture* a) : emit(a) {}
+    __device__ ~diffuse_light() { delete emit; }
+
+    __device__ virtual bool
+    scatter(const ray&, const hit_record&, vec3&, ray&, curandState*) const override
+    {
+        return false;
+    }
+
+    __device__ virtual vec3 emitted(double u, double v, const vec3& p) const override
+    {
+        return emit->value(u, v, p);
+    }
+
+public:
+    Texture* emit;
+};
+
 #endif
