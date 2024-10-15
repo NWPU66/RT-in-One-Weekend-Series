@@ -1,9 +1,9 @@
 #ifndef VEC3H
 #define VEC3H
 
+#include <cmath>
 #include <iostream>
 #include <math.h>
-#include <stdlib.h>
 
 class vec3 {
 public:
@@ -47,6 +47,10 @@ public:
     {
         return e[0] * e[0] + e[1] * e[1] + e[2] * e[2];
     }
+    __host__ __device__ inline vec3 floor() const
+    {
+        return {::floor(e[0]), ::floor(e[1]), ::floor(e[2])};
+    }
     __host__ __device__ inline void make_unit_vector();
     __host__ __device__ inline vec3 gamma_correction() const;
 
@@ -61,7 +65,7 @@ inline std::istream& operator>>(std::istream& is, vec3& t)
 
 inline std::ostream& operator<<(std::ostream& os, const vec3& t)
 {
-    os << t.e[0] << " " << t.e[1] << " " << t.e[2];
+    os << (int)t.e[0] << " " << (int)t.e[1] << " " << (int)t.e[2];
     return os;
 }
 
@@ -183,6 +187,16 @@ __host__ __device__ inline vec3 vec3::gamma_correction() const
 {
     const float inverse_gamma = 1.0f / 2.2f;
     return vec3(powf(e[0], inverse_gamma), powf(e[1], inverse_gamma), powf(e[2], inverse_gamma));
+}
+
+__host__ __device__ inline vec3 max(const vec3& a, const vec3& b)
+{
+    return vec3(fmax(a.e[0], b.e[0]), fmax(a.e[1], b.e[1]), fmax(a.e[2], b.e[2]));
+}
+
+__host__ __device__ inline vec3 min(const vec3& a, const vec3& b)
+{
+    return vec3(fmin(a.e[0], b.e[0]), fmin(a.e[1], b.e[1]), fmin(a.e[2], b.e[2]));
 }
 
 #endif

@@ -14,6 +14,7 @@ public:
 
     __device__ vec3 min() const { return _min; }
     __device__ vec3 max() const { return _max; }
+    __device__ vec3 centrer() const { return (_min + _max) / 2.0f; }
 
     __device__ bool hit(const ray& r, float tmin, float tmax) const
     {

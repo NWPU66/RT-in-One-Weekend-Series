@@ -2,6 +2,7 @@
 
 # libraries
 find_package(glm CONFIG REQUIRED)
+find_package(Stb REQUIRED)
 
 # cuda compiler
 enable_language(CUDA)
@@ -10,7 +11,7 @@ enable_language(CUDA)
 # message(${CUDA_LIBS})
 # link_directories(${CUDA_ROOT}/lib/x64)
 
-# set(NVCC_FLAGS -g -G)
+# set(CUDA_NVCC_FLAGS -g -G -dc)
 # NOTE - nvidia nsight vscode 调试要点
 # 首先，编译：使用nvcc编译时要加上“-g -G”，-g：将c++代码编译成可调式的版本，-G则针对cuda代码
 # 其次，在vscode上配置launch.json文件，申明debuggerPath：cuda-gdb和program
@@ -19,7 +20,7 @@ enable_language(CUDA)
 
 file(GLOB UTIL_SRC ${CMAKE_CURRENT_SOURCE_DIR}/*.cuh)
 
-file(GLOB_RECURSE CH_FILES ${CMAKE_CURRENT_SOURCE_DIR}/Ch*)
+file(GLOB_RECURSE CH_FILES ${CMAKE_CURRENT_SOURCE_DIR}/Ch*.cu)
 foreach(CH_FILE ${CH_FILES})
     #获取文件名
     get_filename_component(CH_FILE_NAME ${CH_FILE} NAME_WE)

@@ -6,6 +6,16 @@
 #include "aabb.h"
 #include "hitable.h"
 
+#define PI 3.14159265358979323846
+
+__device__ void get_sphere_uv(const vec3& p, double& u, double& v)
+{
+    auto phi   = atan2(p.z(), p.x());
+    auto theta = asin(p.y());
+    u          = 1 - (phi + PI) / (2 * PI);
+    v          = (theta + PI / 2) / PI;
+}
+
 class sphere : public hitable {
 public:
     __device__ sphere() {}
@@ -35,6 +45,7 @@ __device__ bool sphere::hit(const ray& r, float t_min, float t_max, hit_record& 
             rec.p       = r.point_at_parameter(rec.t);
             rec.normal  = (rec.p - center) / radius;
             rec.mat_ptr = mat_ptr;
+            get_sphere_uv(rec.normal, rec.u, rec.v);
             return true;
         }
         temp = (-b + sqrt(discriminant)) / a;
@@ -44,6 +55,7 @@ __device__ bool sphere::hit(const ray& r, float t_min, float t_max, hit_record& 
             rec.p       = r.point_at_parameter(rec.t);
             rec.normal  = (rec.p - center) / radius;
             rec.mat_ptr = mat_ptr;
+            get_sphere_uv(rec.normal, rec.u, rec.v);
             return true;
         }
     }
