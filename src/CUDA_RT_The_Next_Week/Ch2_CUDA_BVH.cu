@@ -178,7 +178,7 @@ __global__ void create_world(hitable**    d_list,
     }
 }
 
-__global__ void free_world(hitable** d_list, hitable** d_world, camera** d_camera)
+__global__ void free_world(hitable** d_list, hitable** d_world, camera** d_camera, hitable** d_bvh)
 {
     for (int i = 0; i < 22 * 22 + 1 + 4; i++)  // NOTE -
     {
@@ -187,6 +187,7 @@ __global__ void free_world(hitable** d_list, hitable** d_world, camera** d_camer
         delete d_list[i];
     }
     delete *d_world;
+    delete *d_bvh;
     delete *d_camera;
 }
 
@@ -237,6 +238,7 @@ int main()
     checkCudaErrors(cudaGetLastError());
     checkCudaErrors(cudaDeviceSynchronize());
 
+    // render with bvh
     auto start = std::chrono::system_clock::now();
     // Render our buffer
     const dim3 blocks(nx / tx + 1, ny / ty + 1);
@@ -249,7 +251,16 @@ int main()
     checkCudaErrors(cudaDeviceSynchronize());
     auto stop     = std::chrono::system_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(stop - start);
-    std::cout << "Time:  " << duration.count() / 1000.0f << " s\n";
+    std::cout << "With BVH, Time:  " << duration.count() / 1000.0f << " s\n";
+
+    // render without bvh
+    start = std::chrono::system_clock::now();
+    render<<<blocks, threads>>>(fb, nx, ny, ns, d_camera, d_world, d_world, d_rand_state);
+    checkCudaErrors(cudaGetLastError());
+    checkCudaErrors(cudaDeviceSynchronize());
+    stop     = std::chrono::system_clock::now();
+    duration = std::chrono::duration_cast<std::chrono::milliseconds>(stop - start);
+    std::cout << "Without BVH, Time:  " << duration.count() / 1000.0f << " s\n";
 
     // Output FB as Image
     std::ofstream out(OUTPUT_FILE);
@@ -272,10 +283,11 @@ int main()
 
     // clean up
     checkCudaErrors(cudaDeviceSynchronize());
-    free_world<<<1, 1>>>(d_list, d_world, d_camera);
+    free_world<<<1, 1>>>(d_list, d_world, d_camera, d_bvh);
     checkCudaErrors(cudaGetLastError());
     checkCudaErrors(cudaFree(d_camera));
     checkCudaErrors(cudaFree(d_world));
+    checkCudaErrors(cudaFree(d_bvh));
     checkCudaErrors(cudaFree(d_list));
     checkCudaErrors(cudaFree(d_rand_state));
     checkCudaErrors(cudaFree(d_rand_state2));
