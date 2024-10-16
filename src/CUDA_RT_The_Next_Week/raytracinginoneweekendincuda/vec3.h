@@ -51,8 +51,12 @@ public:
     {
         return {::floor(e[0]), ::floor(e[1]), ::floor(e[2])};
     }
+    __host__ __device__ inline vec3 abs() const { return {::abs(e[0]), ::abs(e[1]), ::abs(e[2])}; }
     __host__ __device__ inline void make_unit_vector();
     __host__ __device__ inline vec3 gamma_correction() const;
+
+    __host__ __device__ inline float min_value() const { return fmin(e[0], fmin(e[1], e[2])); }
+    __host__ __device__ inline float max_value() const { return fmax(e[0], fmax(e[1], e[2])); }
 
     float e[3];
 };
@@ -176,6 +180,26 @@ __host__ __device__ inline vec3& vec3::operator/=(const float t)
     e[1] *= k;
     e[2] *= k;
     return *this;
+}
+
+__host__ __device__ inline bool operator<(const vec3& v1, const vec3& v2)
+{
+    return v1.e[0] < v2.e[0] && v1.e[1] < v2.e[1] && v1.e[2] < v2.e[2];
+}
+
+__host__ __device__ inline bool operator<=(const vec3& v1, const vec3& v2)
+{
+    return v1.e[0] <= v2.e[0] && v1.e[1] <= v2.e[1] && v1.e[2] <= v2.e[2];
+}
+
+__host__ __device__ inline bool operator>(const vec3& v1, const vec3& v2)
+{
+    return v1.e[0] > v2.e[0] && v1.e[1] > v2.e[1] && v1.e[2] > v2.e[2];
+}
+
+__host__ __device__ inline bool operator>=(const vec3& v1, const vec3& v2)
+{
+    return v1.e[0] >= v2.e[0] && v1.e[1] >= v2.e[1] && v1.e[2] >= v2.e[2];
 }
 
 __host__ __device__ inline vec3 unit_vector(vec3 v)

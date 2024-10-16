@@ -28,6 +28,7 @@
 #include "raytracinginoneweekendincuda/texture.h"
 #include "raytracinginoneweekendincuda/util.h"
 #include "raytracinginoneweekendincuda/vec3.h"
+#include "raytracinginoneweekendincuda/volume.h"
 
 // 3rdparty
 #define STB_IMAGE_IMPLEMENTATION
@@ -192,7 +193,7 @@ __global__ void create_world(hitable**      d_list,
         auto red_mat   = new lambertian(new const_texture(vec3(0.65, 0.05, 0.05)));
         auto white_mat = new lambertian(new const_texture(vec3(0.73, 0.73, 0.73)));
         auto green_mat = new lambertian(new const_texture(vec3(0.12, 0.45, 0.15)));
-        auto light_mat = new diffuse_light(new const_texture(vec3(15, 15, 15)));
+        auto light_mat = new diffuse_light(new const_texture(vec3(15.0)));
 
         // main objects
         int i       = 0;
@@ -202,10 +203,10 @@ __global__ void create_world(hitable**      d_list,
         d_list[i++] = new xy_rect(0, 555, 0, 555, 555, white_mat);
         d_list[i++] = new xz_rect(0, 555, 0, 555, 555, white_mat);
         // 2 box
-        d_list[i++] =
-            new rotate_y(new translate(new box(vec3(130, 0, 65), vec3(295, 165, 230), white_mat),
-                                       vec3(0, 20, 0)),
-                         45.0f);
+        auto* dieletric = new sphere(vec3(210, 100, 150), 80, new dielectric(1.5));
+        auto* volume =
+            new constant_medium(dieletric, 0.01, new const_texture(vec3(0, 0, 0.8)), rand_state);
+        d_list[i++] = new SSS_volume(dieletric, volume);
         d_list[i++] =
             new rotate_y(new box(vec3(265, 0, 295), vec3(430, 330, 460), white_mat), -45.0f);
 

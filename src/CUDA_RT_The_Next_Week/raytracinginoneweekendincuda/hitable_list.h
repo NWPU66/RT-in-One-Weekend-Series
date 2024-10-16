@@ -3,6 +3,8 @@
 
 #include "aabb.h"
 #include "hitable.h"
+#include <cfloat>
+#include <cstdlib>
 
 class hitable_list : public hitable {
 public:
@@ -14,6 +16,8 @@ public:
     }
     __device__ virtual bool hit(const ray& r, float tmin, float tmax, hit_record& rec) const;
     __device__ virtual bool bounding_box(float t0, float t1, aabb& output_box) const;
+
+    __device__ float sdf(const vec3& p, float time) const override;
 
     hitable** list;
     int       list_size;
@@ -51,6 +55,17 @@ __device__ bool hitable_list::bounding_box(float t0, float t1, aabb& output_box)
     }
 
     return true;
+}
+
+__device__ float hitable_list::sdf(const vec3& p, float time) const
+{
+    float min_sdf = FLT_MAX;
+    for (int i = 0; i < list_size; i++)
+    {
+        float sdf = list[i]->sdf(p,time);
+        if (abs(sdf) < abs(min_sdf)) { min_sdf = sdf; }
+    }
+    return min_sdf;
 }
 
 #endif

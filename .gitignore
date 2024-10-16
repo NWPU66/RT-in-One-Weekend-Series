@@ -42,3 +42,8 @@ build/
 x64/
 
 3rdparty/open3d*/
+
+# 
+src/CUDA_RT_The_Next_Week/raytracinginoneweekendincuda/.gitignore
+src/CUDA_RT_The_Next_Week/raytracinginoneweekendincuda/Makefile
+src/CUDA_RT_The_Next_Week/raytracinginoneweekendincuda/README.md
