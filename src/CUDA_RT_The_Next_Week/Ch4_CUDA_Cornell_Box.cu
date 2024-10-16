@@ -247,7 +247,7 @@ int main()
 {
     const int nx = 800;
     const int ny = 800;
-    const int ns = 32;
+    const int ns = 1024;
     const int tx = 8;
     const int ty = 8;
 
