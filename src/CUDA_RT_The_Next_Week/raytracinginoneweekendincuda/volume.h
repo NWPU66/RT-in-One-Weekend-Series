@@ -129,7 +129,7 @@ __device__ bool SSS_volume::hit(const ray& r, float t_min, float t_max, hit_reco
 
     // 内部击中，但是不知道是否穿透
     hit_record volume_rec;
-    bool       volume_hit = dielectric->hit(r, t_min, t_max, volume_rec);
+    bool       volume_hit = volume->hit(r, t_min, t_max, volume_rec);
     if (volume_hit)
     {
         // 内部击中

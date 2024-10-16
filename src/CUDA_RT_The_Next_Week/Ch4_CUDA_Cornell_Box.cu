@@ -227,6 +227,10 @@ __global__ void create_world(hitable**      d_list,
         float      time0 = 0.0, time1 = 1.0;
         *d_camera = new camera(lookfrom, lookat, vup, vfov, aspect_ratio, aperture, dist_to_focus,
                                time0, time1);
+
+        // For Debug SSS_volume
+        vec3 a = vec3(278, 278, -800), b = vec3(210, 110, 150);
+        ray_color(ray(a, b - a), d_world, rand_state);
     }
 }
 
