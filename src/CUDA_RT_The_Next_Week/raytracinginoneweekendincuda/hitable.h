@@ -115,7 +115,7 @@ __device__ rotate_y::rotate_y(hitable* p, float angle) : ptr(p), angle(angle)
 {
     hasbox = ptr->bounding_box(0, 1, bbox);
 
-    vec3 _min(-FLT_MAX), _max(FLT_MAX);
+    vec3 _min(FLT_MAX), _max(-FLT_MAX);
     for (int i = 0; i < 2; i++)
     {
         for (int j = 0; j < 2; j++)
@@ -140,6 +140,7 @@ __device__ rotate_y::rotate_y(hitable* p, float angle) : ptr(p), angle(angle)
 
 __device__ bool rotate_y::hit(const ray& r, float t_min, float t_max, hit_record& rec) const
 {
+    vec3 bbox_center = bbox.centrer();
     vec3 rotated_ori = rotate_around_y(r.origin(), -angle, bbox.centrer());
     vec3 rotated_dir = rotate_around_y(r.direction(), -angle);
     ray  rotated_r(rotated_ori, rotated_dir);
