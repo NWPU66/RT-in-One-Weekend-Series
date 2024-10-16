@@ -36,7 +36,7 @@ foreach(CH_FILE ${CH_FILES})
         )
     #添加链接库
     target_link_libraries(${CH_FILE_NAME} PRIVATE 
-        glm::glm
+        # glm::glm
         # ${CUDA_LIBS}
         )
     #安装
