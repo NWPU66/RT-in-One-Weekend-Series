@@ -11,9 +11,11 @@ public:
     __device__ moving_sphere(vec3 cen0, vec3 cen1, float t0, float t1, float r, material* m)
         : center0(cen0), center1(cen1), time0(t0), time1(t1), radius(r), mat_ptr(m) {};
     __device__ ~moving_sphere() { delete mat_ptr; }
+
     __device__ virtual bool hit(const ray& r, float tmin, float tmax, hit_record& rec) const;
     __device__ vec3         center(float time) const;
     __device__ virtual bool bounding_box(float t0, float t1, aabb& output_box) const;
+    __device__ float        sdf(const vec3& p, float time) const override;
 
 private:
     vec3      center0, center1;
@@ -65,6 +67,11 @@ __device__ bool moving_sphere::bounding_box(float t0, float t1, aabb& output_box
     aabb box1(center(t1) - vec3(abs(radius)), center(t1) + vec3(abs(radius)));
     output_box = surrounding_box(box0, box1);
     return true;
+}
+
+__device__ float moving_sphere::sdf(const vec3& p, float time) const
+{
+    return (p - center(time)).length() - radius;
 }
 
 #endif

@@ -36,8 +36,34 @@ struct hit_record
 
 class hitable {
 public:
+    /**
+     * @brief
+     *
+     * @param r
+     * @param t_min
+     * @param t_max
+     * @param rec
+     * @return __device__
+     */
     __device__ virtual bool hit(const ray& r, float t_min, float t_max, hit_record& rec) const = 0;
-    __device__ virtual bool bounding_box(float t0, float t1, aabb& output_box) const           = 0;
+
+    /**
+     * @brief
+     *
+     * @param t0
+     * @param t1
+     * @param output_box
+     * @return __device__
+     */
+    __device__ virtual bool bounding_box(float t0, float t1, aabb& output_box) const = 0;
+
+    /**
+     * @brief
+     *
+     * @param p
+     * @return __device__
+     */
+    __device__ virtual float sdf(const vec3& p, float time) const = 0;
 };
 
 class flip_face : public hitable {
@@ -57,6 +83,8 @@ public:
         return ptr->bounding_box(t0, t1, output_box);
     }
 
+    __device__ float sdf(const vec3& p, float time) const override { return -ptr->sdf(p, time); }
+
 public:
     hitable* ptr;
 };
@@ -69,6 +97,11 @@ public:
     __device__ bool hit(const ray& r, float t_min, float t_max, hit_record& rec) const override;
 
     __device__ bool bounding_box(float t0, float t1, aabb& output_box) const override;
+
+    __device__ float sdf(const vec3& p, float time) const override
+    {
+        return ptr->sdf(p - offset, time);
+    }
 
 public:
     hitable* ptr;
@@ -103,6 +136,8 @@ public:
         output_box = bbox;
         return hasbox;
     }
+
+    __device__ float sdf(const vec3& p, float time) const override;
 
 public:
     hitable* ptr;
@@ -154,13 +189,10 @@ __device__ bool rotate_y::hit(const ray& r, float t_min, float t_max, hit_record
     return true;
 }
 
-class hitable_factory {
-public:
-    __host__ virtual hitable* create() const = 0;
-    __host__ virtual ~hitable_factory() {}
-
-private:
-    __host__ virtual hitable* malloc() const {}
-};
+__device__ float rotate_y::sdf(const vec3& p, float time) const
+{
+    vec3 rotated_p = rotate_around_y(p, -angle, bbox.centrer());
+    return ptr->sdf(rotated_p, time);
+}
 
 #endif

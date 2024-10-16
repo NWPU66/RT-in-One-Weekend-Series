@@ -21,8 +21,10 @@ public:
     __device__ sphere() {}
     __device__ sphere(vec3 cen, float r, material* m) : center(cen), radius(r), mat_ptr(m) {};
     __device__ ~sphere() { delete mat_ptr; }
+
     __device__ virtual bool hit(const ray& r, float tmin, float tmax, hit_record& rec) const;
     __device__ virtual bool bounding_box(float t0, float t1, aabb& output_box) const;
+    __device__ float        sdf(const vec3& p, float time) const override;
 
     vec3      center;
     float     radius;
@@ -66,6 +68,11 @@ __device__ bool sphere::bounding_box(float t0, float t1, aabb& output_box) const
 {
     output_box = aabb(center - vec3(abs(radius)), center + vec3(abs(radius)));
     return true;
+}
+
+__device__ float sphere::sdf(const vec3& p, float time) const
+{
+    return (p - center).length() - radius;
 }
 
 #endif

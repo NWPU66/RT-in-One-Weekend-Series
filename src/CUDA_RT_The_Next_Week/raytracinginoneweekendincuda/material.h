@@ -181,4 +181,25 @@ public:
     Texture* emit;
 };
 
+class isotropic : public material {
+public:
+    __device__ isotropic(Texture* a) : albedo(a) {}
+
+    __device__ bool scatter(const ray&        r_in,
+                            const hit_record& rec,
+                            vec3&             attenuation,
+                            ray&              scattered,
+                            curandState*      local_rand_state) const override
+    {
+        scattered   = ray(rec.p, random_in_unit_sphere(local_rand_state), r_in.time());
+        attenuation = albedo->value(rec.u, rec.v, rec.p);
+        return true;
+    }
+
+    __device__ ~isotropic() override { delete albedo; }
+
+public:
+    Texture* albedo;
+};
+
 #endif

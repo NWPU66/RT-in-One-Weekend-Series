@@ -1,6 +1,7 @@
 #ifndef BOXH
 #define BOXH
 
+#include <cmath>
 #include <cstdlib>
 #include <curand_kernel.h>
 
@@ -24,6 +25,16 @@ public:
         output_box = aabb(box_min, box_max);
         return true;
     }
+
+    __device__ float sdf(const vec3& p, float time) const override;
+
+    __device__ bool is_inside(const vec3& p) const
+    {
+        return (p.x() >= box_min.x() && p.x() <= box_max.x() && p.y() >= box_min.y() &&
+                p.y() <= box_max.y() && p.z() >= box_min.z() && p.z() <= box_max.z());
+    }
+
+    __device__ vec3 center() const { return (box_min + box_max) / 2; }
 
 public:
     vec3          box_min;
@@ -53,6 +64,18 @@ __device__ bool box::hit(const ray& r, float t_min, float t_max, hit_record& rec
     return sides->hit(r, t_min, t_max, rec);
 }
 
-class box_factory : public hitable_factory {};
+__device__ float box::sdf(const vec3& p, float time) const
+{
+    vec3 box_local_p = (p - center()).abs();
+    vec3 half_size   = (box_max - box_min) / 2.0f;
+
+    if (box_local_p < half_size)  // inside the box
+    {
+        return (box_local_p - half_size).abs().min_value();
+    }
+
+    // outside the box
+    return max(box_local_p - half_size, vec3(0)).length();
+}
 
 #endif

@@ -2,6 +2,8 @@
 #define BVHH
 
 #include <algorithm>
+#include <cmath>
+#include <cstdlib>
 #include <functional>
 #include <iostream>
 
@@ -33,6 +35,8 @@ public:
     __device__ virtual bool
     hit(const ray& r, float t_min, float t_max, hit_record& rec) const override;
     __device__ virtual bool bounding_box(float t0, float t1, aabb& output_box) const override;
+
+    __device__ float sdf(const vec3& p, float time) const override;
 
 public:
     // object 指向场景中的其他图元，析构的时候不会释放，释放由free_world()负责
@@ -183,6 +187,14 @@ __device__ bool bvh_node::bounding_box(float t0, float t1, aabb& output_box) con
 {
     output_box = box;
     return true;
+}
+
+__device__ float bvh_node::sdf(const vec3& p, float time) const
+{
+    if (object) { return object->sdf(p, time); }
+    float left_sdf  = left->sdf(p, time);
+    float right_sdf = right->sdf(p, time);
+    return (abs(left_sdf) < abs(right_sdf)) ? left_sdf : right_sdf;
 }
 
 #endif
