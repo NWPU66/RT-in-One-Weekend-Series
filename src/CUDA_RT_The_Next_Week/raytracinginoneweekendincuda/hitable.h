@@ -115,7 +115,7 @@ __device__ rotate_y::rotate_y(hitable* p, float angle) : ptr(p), angle(angle)
 {
     hasbox = ptr->bounding_box(0, 1, bbox);
 
-    vec3 _min(-FLT_MAX), _max(FLT_MAX);
+    vec3 _min(+FLT_MAX), _max(-FLT_MAX);  // FIXME - _min要置为负无穷，否则会出错
     for (int i = 0; i < 2; i++)
     {
         for (int j = 0; j < 2; j++)
