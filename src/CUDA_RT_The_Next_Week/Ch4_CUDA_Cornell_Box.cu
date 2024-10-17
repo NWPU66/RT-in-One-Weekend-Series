@@ -83,8 +83,7 @@ __device__ vec3 color(const ray& r, hitable** world, curandState* local_rand_sta
     return vec3(0.0, 0.0, 0.0);  // exceeded recursion
 }
 
-__device__ vec3 ray_color(const ray& r,
-
+__device__ vec3 ray_color(const ray&   r,
                           hitable**    world,
                           curandState* local_rand_state,
                           const vec3&  background = {0})
