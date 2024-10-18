@@ -15,6 +15,7 @@
 #endif
 #include <cmath>
 #include <cstddef>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
@@ -88,7 +89,7 @@ constexpr int numPixels   = imageWidth * imageHeight;
 constexpr float aspectRatio = (float)imageWidth / (float)imageHeight;
 const vec3      lookfrom(278, 278, -800);
 const vec3      lookat(278, 278, 0);
-const int       SPP      = 100;
+const int       SPP      = 128;
 const int       maxDepth = 50;
 // cuda concurrency
 const dim3   threads(8, 8);
@@ -245,7 +246,7 @@ public:
         // transfer data type to DataType
         const size_t sourceByteSize = width * height * channels * sizeof(unsigned char);
         DataType*    pConvertedData =
-            DataTypeConvertion<unsigned char, DataType>(imageData, sourceByteSize, true);
+            DataTypeConvertion<unsigned char, DataType>(imageData, sourceByteSize, 1 / 255, true);
 
         // transfer data to GPU
         pUnifiedMenData = AllocateUnifiedMenData(byteSize);
@@ -265,8 +266,11 @@ public:
             return;
         }
 
+        std::cout << "ImageBuffer::Save() Save image to " << filePath << std::endl;
+
         unsigned char* dataToSave =
-            DataTypeConvertion<DataType, unsigned char>(pUnifiedMenData, byteSize, false);
+            DataTypeConvertion<DataType, unsigned char>(pUnifiedMenData, byteSize, 255.99f, false);
+        stbi_flip_vertically_on_write(true);
         stbi_write_png(filePath.c_str(), imageWidth, imageHeight, imageChannels, dataToSave, 0);
         stbi_image_free(dataToSave);
     }
@@ -280,8 +284,10 @@ public:
      *
      */
     template <typename SourceType, typename TargetType>
-    __host__ TargetType*
-    DataTypeConvertion(SourceType* pSource, size_t sourceByteSize, bool releaseSource = false)
+    __host__ TargetType* DataTypeConvertion(SourceType* pSource,
+                                            size_t      sourceByteSize,
+                                            float       multiplier    = 1.0f,
+                                            bool        releaseSource = false)
     {
         if (pSource == nullptr)
         {
@@ -298,7 +304,7 @@ public:
         TargetType*  pTarget        = (TargetType*)malloc(targetByteSize);
         for (int i = 0; i < numElements; i++)
         {
-            pTarget[i] = static_cast<DataType>(pSource[i]);
+            pTarget[i] = static_cast<DataType>(pSource[i] * multiplier);
         }
 
         if (releaseSource) { free(pSource); }
@@ -738,13 +744,6 @@ private:
         {
             auto frameBuffer = gBufferPool->GetBackBufferPtr().find(renderTarget)->second;
             frameBuffer->Save(savePath);
-
-            // read buffer
-            auto* ptr = frameBuffer->GetUnifiedMenData();
-            for (int i = 0; i < 100; i++)
-            {
-                std::cout << "pixel " << i << ": " << ptr[i] << "\n";
-            }
         }
     }
 
