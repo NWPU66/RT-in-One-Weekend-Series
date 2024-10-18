@@ -540,8 +540,8 @@ public:
         checkCudaErrors(cudaDeviceSynchronize());
     }
 
-    __host__ __device__ camera*       GetCamera() const { return camera[0]; }
-    __host__ __device__ hitable_list* GetGeometryList() const { return geometryList[0]; }
+    __host__ __device__ camera**       GetCamera() const { return camera; }
+    __host__ __device__ hitable_list** GetGeometryList() const { return geometryList; }
 
 private:
     const int      numGeometries = 8;
@@ -601,28 +601,31 @@ __device__ vec3 rayColor(const ray&   r,
     return vec3(0);  // exceeded recursion
 }
 
-__global__ void _StandardRender(vec3* const        frameBuffer,
-                                camera* const      camera,
-                                hitable_list*      geometryList,
+__global__ void _StandardRender(int                width,
+                                int                height,
+                                int                spp,
+                                vec3* const        frameBuffer,
+                                camera** const     camera,
+                                hitable_list**     geometryList,
                                 curandState* const randStatePerPixel)
 {
     int i = threadIdx.x + blockIdx.x * blockDim.x;
     int j = threadIdx.y + blockIdx.y * blockDim.y;
-    if ((i >= imageWidth) || (j >= imageHeight)) { return; }
-    int pixel_index = j * imageWidth + i;
+    if ((i >= width) || (j >= height)) { return; }
+    int pixel_index = j * width + i;
 
     auto* randState = randStatePerPixel + pixel_index;
 
     vec3 col(0);
-    for (int s = 0; s < SPP; s++)
+    for (int s = 0; s < spp; s++)
     {
-        float u = float(i + curand_uniform(randState)) / float(imageWidth);
-        float v = float(j + curand_uniform(randState)) / float(imageHeight);
-        ray   r = camera->get_ray(u, v, randState);
-        col += rayColor(r, geometryList, randState);
+        float u = float(i + curand_uniform(randState)) / float(width);
+        float v = float(j + curand_uniform(randState)) / float(height);
+        ray   r = camera[0]->get_ray(u, v, randState);
+        col += rayColor(r, *geometryList, randState);
     }
 
-    frameBuffer[pixel_index] = DefaultToneMappingFunc(col / float(SPP));  // Tone Mapping
+    frameBuffer[pixel_index] = DefaultToneMappingFunc(col / float(spp));  // Tone Mapping
 }
 
 /**
@@ -650,12 +653,17 @@ public:
 
     void StandardRender(ImageBuffer<float>* const renderTarget) const
     {
-        auto* randStatePerPixel = Curand::GetInstance()->GetCurandStatePerPixel();
-        auto* frameBuffer       = reinterpret_cast<vec3*>(renderTarget->GetUnifiedMenData());
-        auto* camera            = scene->GetCamera();
-        auto* geomtryList       = scene->GetGeometryList();
+        auto*  randStatePerPixel = Curand::GetInstance()->GetCurandStatePerPixel();
+        auto*  frameBuffer       = reinterpret_cast<vec3*>(renderTarget->GetUnifiedMenData());
+        auto** camera            = scene->GetCamera();
+        auto** geomtryList       = scene->GetGeometryList();
+        /**FIXME - scene->GetCamera(); 越界访问问题
+        GetGeometryList(): { return *geomtryList; }
+        geomtryList本身存储的是gpu专用地址，但是解引用的时候，代码在cpu上，解引用得到的对象在gpu上
+         */
 
-        _StandardRender<<<blocks, threads>>>(frameBuffer, camera, geomtryList, randStatePerPixel);
+        _StandardRender<<<blocks, threads>>>(imageWidth, imageHeight, SPP, frameBuffer, camera,
+                                             geomtryList, randStatePerPixel);
         checkCudaErrors(cudaGetLastError());
         checkCudaErrors(cudaDeviceSynchronize());
     }
@@ -730,6 +738,13 @@ private:
         {
             auto frameBuffer = gBufferPool->GetBackBufferPtr().find(renderTarget)->second;
             frameBuffer->Save(savePath);
+
+            // read buffer
+            auto* ptr = frameBuffer->GetUnifiedMenData();
+            for (int i = 0; i < 100; i++)
+            {
+                std::cout << "pixel " << i << ": " << ptr[i] << "\n";
+            }
         }
     }
 
