@@ -58,7 +58,7 @@ public:
 
     __device__ virtual vec3 emitted(double u, double v, const vec3& p) const { return vec3(0); }
 
-    __device__ virtual ~material() {}
+    // __device__ virtual ~material() {}
     /**FIXME - ~material() = default 问题
      被显式申明为default的函数，在NVCC10版本后，会自动忽略__device__
      */
@@ -196,7 +196,7 @@ public:
         return true;
     }
 
-    __device__ ~isotropic() override { delete albedo; }
+    __device__ ~isotropic() { delete albedo; }
 
 public:
     Texture* albedo;

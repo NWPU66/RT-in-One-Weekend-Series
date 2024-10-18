@@ -3,7 +3,9 @@
 
 // cpp
 #include <chrono>
+#include <cstdlib>
 #include <cuda_runtime_api.h>
+#include <driver_types.h>
 #include <fstream>
 #include <iostream>
 #include <memory>
@@ -83,8 +85,7 @@ __device__ vec3 color(const ray& r, hitable** world, curandState* local_rand_sta
     return vec3(0.0, 0.0, 0.0);  // exceeded recursion
 }
 
-__device__ vec3 ray_color(const ray& r,
-
+__device__ vec3 ray_color(const ray&   r,
                           hitable**    world,
                           curandState* local_rand_state,
                           const vec3&  background = {0})
@@ -205,7 +206,7 @@ __global__ void create_world(hitable**      d_list,
         // 2 box
         auto* dieletric = new sphere(vec3(210, 100, 150), 80, new dielectric(1.5));
         auto* volume =
-            new constant_medium(dieletric, 0.01, new const_texture(vec3(0, 0, 0.8)), rand_state);
+            new constant_medium(dieletric, 0.02, new const_texture(vec3(0, 0, 0.8)), rand_state);
         d_list[i++] = new SSS_volume(dieletric, volume);
         d_list[i++] =
             new rotate_y(new box(vec3(265, 0, 295), vec3(430, 330, 460), white_mat), -45.0f);

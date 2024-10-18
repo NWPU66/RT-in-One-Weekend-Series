@@ -58,8 +58,11 @@ public:
     __host__ __device__ inline float min_value() const { return fmin(e[0], fmin(e[1], e[2])); }
     __host__ __device__ inline float max_value() const { return fmax(e[0], fmax(e[1], e[2])); }
 
-    float e[3];
+    float             e[3];
+    static const vec3 worldUp;
 };
+
+const vec3 vec3::worldUp = vec3(0, 1, 0);
 
 inline std::istream& operator>>(std::istream& is, vec3& t)
 {
