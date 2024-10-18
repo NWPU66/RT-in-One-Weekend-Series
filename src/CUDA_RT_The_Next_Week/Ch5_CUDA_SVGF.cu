@@ -10,7 +10,6 @@
  */
 
 // c
-#include <utility>
 #ifdef DONOTUSE
 #    include <__clang_cuda_runtime_wrapper.h>
 #endif
@@ -24,13 +23,14 @@
 #include <functional>
 #include <iostream>
 #include <map>
-#include <memory>
+#include <mutex>
 #include <new>
 #include <queue>
 #include <set>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 // cuda
@@ -61,6 +61,8 @@
 #include "stb_image.h"
 #include "stb_image_write.h"
 
+// ANCHOR - Marco and Variable----------------------------------------------------------------------
+
 #define checkCudaErrors(val) check_cuda((val), #val, __FILE__, __LINE__)
 void check_cuda(cudaError_t result, char const* const func, const char* const file, int const line)
 {
@@ -78,48 +80,42 @@ void check_cuda(cudaError_t result, char const* const func, const char* const fi
  * @brief 全局变量
  *
  */
-// basic rendering settings
+// frame buffer
 const int     imageWidth  = 800;
-const int     imageHeight = 400;
-const float   aspectRatio = (float)imageWidth / (float)imageHeight;
-const vec3    lookfrom(278, 278, -800);
-const vec3    lookat(278, 278, 0);
-constexpr int numPixels = imageWidth * imageHeight;
-const int     SPP       = 100;
-const int     maxDepth  = 50;
-// cuda concurrency settings
+const int     imageHeight = 800;
+constexpr int numPixels   = imageWidth * imageHeight;
+// camera and rendering
+constexpr float aspectRatio = (float)imageWidth / (float)imageHeight;
+const vec3      lookfrom(278, 278, -800);
+const vec3      lookat(278, 278, 0);
+const int       SPP      = 100;
+const int       maxDepth = 50;
+// cuda concurrency
 const dim3   threads(8, 8);
 const dim3   blocks(imageWidth / threads.x + 1, imageHeight / threads.y + 1);
 const size_t curandSeed = 3777;
-//
-const int gBufferHistorySize = 10;
-// save settings
+std::mutex   CurandMutex;
+// SVGF core
+const int gBufferHistorySize = 5;
+// image save
 const std::string savePath = "out.png";
 
-/**
- * @brief CudaLock
- *
- */
-struct CudaLock
+// ANCHOR - Curand------------------------------------------------------------------------------
+
+__global__ void initCurandState(curandState* _pCurandState)
 {
-public:
-    __host__ CudaLock(void)
-    {
-        int state = 0;
-        cudaMalloc((void**)&mutex, sizeof(int));
-        cudaMemcpy(mutex, &state, sizeof(int), cudaMemcpyHostToDevice);
-    }
-    __host__ ~CudaLock(void) { cudaFree(mutex); }
+    if (threadIdx.x == 0 && blockIdx.x == 0) { curand_init(curandSeed, 0, 0, _pCurandState); }
+}
 
-    __device__ void lock(void)
-    {
-        while (atomicCAS(mutex, 0, 1) != 0) {};
-    }
-    __device__ void unlock(void) { atomicExch(mutex, 0); }
-
-private:
-    int* mutex;
-} curandLock;
+__global__ void
+initCurandStatePerPixel(int imageWidth, int imageHeight, curandState* _pCurandStatePerPixel)
+{
+    int i = threadIdx.x + blockIdx.x * blockDim.x;
+    int j = threadIdx.y + blockIdx.y * blockDim.y;
+    if ((i >= imageWidth) || (j >= imageHeight)) { return; }
+    int pixel_index = j * imageWidth + i;
+    curand_init(curandSeed + pixel_index, 0, 0, _pCurandStatePerPixel + pixel_index);
+}
 
 /**
  * @brief Curand
@@ -127,12 +123,21 @@ private:
  */
 class Curand {
 public:
-    __host__ __device__ static Curand* GetInstance() { return singleton; }
-    __host__ __device__ static void    DestoryInstance() { delete singleton; }
+    __host__ static Curand* GetInstance()
+    {
+        if (singleton == nullptr)
+        {
+            std::lock_guard<std::mutex> lock(CurandMutex);
+            if (singleton == nullptr) { singleton = new Curand(); }
+        }
+        return singleton;
+    }
 
-    __host__ __device__ curandState* GetCurandState() const { return pCurandState; }
-    __host__ __device__ curandState* GetCurandStatePerPixel() const { return pCurandStatePerPixel; }
-    __host__ __device__ curandState* GetCurandStatePerPixel(int i, int j) const
+    __host__ void DestoryInstance() { delete singleton; }
+
+    __host__ curandState* GetCurandState() const { return pCurandState; }
+    __host__ curandState* GetCurandStatePerPixel() const { return pCurandStatePerPixel; }
+    __host__ curandState* GetCurandStatePerPixel(int i, int j) const
     {
         int pixel_index = j * imageWidth + i;
         return pCurandStatePerPixel + pixel_index;
@@ -144,19 +149,31 @@ private:
     curandState*   pCurandStatePerPixel;
     int            numPixels;
 
-    __host__ __device__         Curand(const Curand&)    = delete;
-    __host__ __device__ Curand& operator=(const Curand&) = delete;
+    Curand(const Curand&)            = delete;
+    Curand(Curand&&)                 = delete;
+    Curand& operator=(const Curand&) = delete;
+    Curand& operator=(Curand&&)      = delete;
 
-    __host__ __device__ Curand() : numPixels(numPixels)
+    __host__ Curand() : numPixels(::numPixels)
     {
+        std::cout << "Curand(): Curand initlization" << std::endl;
+        auto totalMen = numPixels * sizeof(curandState) + 1 * sizeof(curandState);
+        std::cout << "Curand(): Total memory allocated: " << totalMen << "bytes. ";
+        std::cout << "A Single curandState Cost: " << sizeof(curandState) << "bytes. "
+                  << "Number of curandState: " << numPixels << std::endl;
+
         checkCudaErrors(cudaMalloc((void**)&pCurandState, numPixels * sizeof(curandState)));
         checkCudaErrors(cudaMalloc((void**)&pCurandStatePerPixel, 1 * sizeof(curandState)));
-        initCurandState<<<0, 0>>>(pCurandState);
+
+        initCurandState<<<1, 1>>>(pCurandState);
+        checkCudaErrors(cudaGetLastError());
+        checkCudaErrors(cudaDeviceSynchronize());
+
         initCurandStatePerPixel<<<blocks, threads>>>(imageWidth, imageHeight, pCurandStatePerPixel);
         checkCudaErrors(cudaGetLastError());
         checkCudaErrors(cudaDeviceSynchronize());
     }
-    __host__ __device__ ~Curand()
+    __host__ ~Curand()
     {
         checkCudaErrors(cudaFree(pCurandState));
         checkCudaErrors(cudaFree(pCurandStatePerPixel));
@@ -164,28 +181,16 @@ private:
         pCurandState         = nullptr;
         pCurandStatePerPixel = nullptr;
     }
-
-    __global__ static void initCurandState(curandState* _pCurandState)
-    {
-        if (threadIdx.x == 0 && blockIdx.x == 0) { curand_init(curandSeed, 0, 0, _pCurandState); }
-    }
-    __global__ static void
-    initCurandStatePerPixel(int imageWidth, int imageHeight, curandState* _pCurandStatePerPixel)
-    {
-        int i = threadIdx.x + blockIdx.x * blockDim.x;
-        int j = threadIdx.y + blockIdx.y * blockDim.y;
-        if ((i >= imageWidth) || (j >= imageHeight)) { return; }
-        int pixel_index = j * imageWidth + i;
-        curand_init(curandSeed + pixel_index, 0, 0, _pCurandStatePerPixel + pixel_index);
-    }
 };
 
-Curand* Curand::singleton = new (std::nothrow) Curand();
+Curand* Curand::singleton = nullptr;
 
 #define RNDSTATE (Curand::GetInstance()->GetCurandState())
 #define RNDPPSTATE (Curand::GetInstance()->GetCurandState())
 #define RNDf (curand_uniform(RNDSTATE))
 #define RND3f (vec3(RNDf, RNDf, RNDf))
+
+// ANCHOR - ImageBuffer---------------------------------------------------------------------------
 
 /**
  * @brief ImageBuffer
@@ -203,8 +208,11 @@ public:
     __host__ ImageBuffer(int width = ::imageWidth, int height = ::imageHeight, int channels = 3)
     {
         std::cout << "ImageBuffer(): ImageBuffer initlization Empty Buffer. " << std::endl;
-        size_t    _byteSize = width * height * channels * sizeof(DataType);
-        DataType* ptr       = AllocateDeviceData<DataType>(_byteSize);
+        size_t _byteSize = width * height * channels * sizeof(DataType);
+        std::cout << "ImageBUffer(): Buffer size: " << _byteSize << "bytes. With Width: " << width
+                  << " Height: " << height << " Channels: " << channels << std::endl;
+
+        DataType* ptr = AllocateHostData<DataType>(_byteSize);
         memset(ptr, 0, _byteSize);
         Init(ptr, width, height, channels);
     }
@@ -296,7 +304,7 @@ public:
 
     __host__ __device__ DataType* GetHostData() const { return pHostData; }
     __host__ __device__ DataType* GetDeviceData() const { return pDeviceData; }
-    __host__ __device__ void      GetImageSize(int*    _imageWidth    = nullptr,
+    void                          GetImageSize(int*    _imageWidth    = nullptr,
                                                int*    _imageHeight   = nullptr,
                                                int*    _imageChannels = nullptr,
                                                int*    _numPixels     = nullptr,
@@ -309,8 +317,8 @@ public:
         if (_byteSize != nullptr) { *_byteSize = byteSize; }
     }
 
-    __host__ __device__ bool isInHost() const { return (pHostData != nullptr); }
-    __host__ __device__ bool isInDevice() const { return (pDeviceData != nullptr); }
+    __host__ bool isInHost() const { return (pHostData != nullptr); }
+    __host__ bool isInDevice() const { return (pDeviceData != nullptr); }
 
     template <typename SourceType, typename TargetType>
     __host__ TargetType*
@@ -350,6 +358,8 @@ private:
 
     __host__ void Init(DataType* _pHostData, int width, int height, int channels = 3)
     {
+        std::cout << "ImageBuffer()::Init(): function called" << std::endl;
+
         if (!_pHostData)
         {
             std::cerr << "Error: Host data is null" << std::endl;
@@ -394,12 +404,14 @@ private:
     __host__ TargetDataType* AllocateDeviceData(size_t byteSize)
     {
         TargetDataType* ptr = nullptr;
-        checkCudaErrors(cudaMallocManaged((void**)&ptr, byteSize));
+        checkCudaErrors(cudaMallocManaged((void**)&ptr, byteSize));  // FIXME -
         checkCudaErrors(cudaGetLastError());
         checkCudaErrors(cudaDeviceSynchronize());
         return ptr;
     }
 };
+
+// ANCHOR - GBufferPool---------------------------------------------------------------------------
 
 /**
  * @brief GBufferPool
@@ -426,7 +438,7 @@ public:
             auto* q = new std::queue<ImageBuffer<float>*>();
             for (int i = 0; i < gBufferHistorySize; i++)
             {
-                q->emplace(imageWidth, imageHeight, static_cast<int>(type));
+                q->emplace(new ImageBuffer<float>(imageWidth, imageHeight, static_cast<int>(type)));
             }
             gBufferMap.emplace(type, q);
         }
@@ -440,7 +452,7 @@ public:
         }
     }
 
-    __host__ __device__ GBufferType2Ptr PopFrontBufferPtr()
+    __host__ GBufferType2Ptr PopFrontBufferPtr()
     {
         auto map = GetFrontBufferPtr();
         for (auto [type, ptr] : gBufferMap)
@@ -450,7 +462,7 @@ public:
         return map;
     }
 
-    __host__ __device__ GBufferType2Ptr GetFrontBufferPtr()
+    __host__ GBufferType2Ptr GetFrontBufferPtr()
     {
         GBufferType2Ptr map;
         for (auto [type, ptr] : gBufferMap)
@@ -460,7 +472,7 @@ public:
         return map;
     }
 
-    __host__ __device__ GBufferType2Ptr GetBackBufferPtr()
+    __host__ GBufferType2Ptr GetBackBufferPtr()
     {
         GBufferType2Ptr map;
         for (auto [type, ptr] : gBufferMap)
@@ -470,7 +482,7 @@ public:
         return map;
     }
 
-    __host__ __device__ void UpdateGBufferPool(GBufferType2Ptr bufferMap)
+    __host__ void UpdateGBufferPool(GBufferType2Ptr bufferMap)
     {
         for (auto [type, ptr] : bufferMap)
         {
@@ -486,6 +498,67 @@ private:
     // Irradiance = source / texture albedo
 };
 
+// ANCHOR - Scene---------------------------------------------------------------------------
+
+__device__ hitable* Transform(hitable* geometry, const vec3& offset = {0}, float rotateYAngle = 0)
+{
+    return new translate(new rotate_y(geometry, rotateYAngle), offset);
+}
+
+__global__ static void CreateWorld(class camera** const camera,
+                                   hitable** const      geometries,
+                                   material** const     materials,
+                                   bvh_node** const     bvh,
+                                   curandState* const   randState)
+{
+    if (threadIdx.x != 0 && blockIdx.x != 0) { return; }
+
+    // create camera
+    vec3  lookfrom(278, 278, -800);
+    vec3  lookat(278, 278, 0);
+    vec3  vup(0, 1, 0);
+    auto  dist_to_focus = 10.0;
+    auto  aperture      = 0.0;
+    auto  vfov          = 40.0;
+    auto  aspectRatio   = (float)imageWidth / (float)imageHeight;
+    float time0 = 0.0, time1 = 1.0;
+    camera[0] = new class camera(lookfrom, lookat, vup, vfov, aspectRatio, aperture, dist_to_focus,
+                                 time0, time1);
+
+    // create materials
+    auto* red_mat    = new lambertian(new const_texture(vec3(0.65, 0.05, 0.05)));
+    auto* white_mat  = new lambertian(new const_texture(vec3(0.73, 0.73, 0.73)));
+    auto* green_mat  = new lambertian(new const_texture(vec3(0.12, 0.45, 0.15)));
+    auto* light_mat  = new diffuse_light(new const_texture(vec3(15.0)));
+    int   mat        = 0;
+    materials[mat++] = red_mat;
+    materials[mat++] = white_mat;
+    materials[mat++] = green_mat;
+    materials[mat++] = light_mat;
+
+    // create geometry
+    int geom           = 0;
+    geometries[geom++] = new yz_rect(0, 555, 0, 555, 555, green_mat);
+    geometries[geom++] = new yz_rect(0, 555, 0, 555, 0, red_mat);
+    geometries[geom++] = new xz_rect(0, 555, 0, 555, 0, white_mat);
+    geometries[geom++] = new xy_rect(0, 555, 0, 555, 555, white_mat);
+    geometries[geom++] = new xz_rect(0, 555, 0, 555, 555, white_mat);
+    // 2 box
+    auto* dieletric = new sphere(vec3(210, 100, 150), 80, new dielectric(1.5));
+    auto* volume =
+        new constant_medium(dieletric, 0.02, new const_texture(vec3(0, 0, 0.8)), randState);
+    geometries[geom++] = new SSS_volume(dieletric, volume);
+    geometries[geom++] =
+        Transform(new box(vec3(265, 0, 295), vec3(430, 330, 460), white_mat), vec3(0), -45.0f);
+
+    // light
+    geometries[geom++] = new flip_face(new xz_rect(213, 343, 227, 332, 554, light_mat));
+
+    // create bvh
+    //  we are not going to use BVH right now
+    //  bvh             = new bvh_node(*geometries, 0, 1, randState);
+}
+
 /**
  * @brief
  *
@@ -498,15 +571,19 @@ public:
 
         // allocate cuda memory
         std::cout << "Scene(): Allocate cuda memory." << std::endl;
-        checkCudaErrors(cudaMallocManaged((void**)&camera, sizeof(class camera*)));
-        checkCudaErrors(cudaMallocManaged((void**)&geometries, numGeometries * sizeof(hitable*)));
-        checkCudaErrors(cudaMallocManaged((void**)&materials, numMaterial * sizeof(material*)));
-        checkCudaErrors(cudaMallocManaged((void**)&bvh, sizeof(bvh_node*)));
+        auto totalMen = sizeof(class camera*) + numGeometries * sizeof(hitable*) +
+                        numMaterial * sizeof(material*) + sizeof(bvh_node*);
+        std::cout << "Scene(): Total memory allocated: " << totalMen << " bytes." << std::endl;
+        checkCudaErrors(cudaMalloc((void**)&camera, sizeof(class camera*)));
+        checkCudaErrors(cudaMalloc((void**)&geometries, numGeometries * sizeof(hitable*)));
+        checkCudaErrors(cudaMalloc((void**)&materials, numMaterial * sizeof(material*)));
+        checkCudaErrors(cudaMalloc((void**)&bvh, sizeof(bvh_node*)));
         checkCudaErrors(cudaGetLastError());
         checkCudaErrors(cudaDeviceSynchronize());
 
         std::cout << "Scene(): Create world." << std::endl;
-        CreateWorld<<<0, 0>>>(camera, geometries, materials, bvh);  // create world
+        auto randState = Curand::GetInstance()->GetCurandState();
+        CreateWorld<<<0, 0>>>(camera, geometries, materials, bvh, randState);  // create world
     }
     __host__ ~Scene()
     {
@@ -541,62 +618,80 @@ private:
     hitable**  geometries;
     material** materials;
     bvh_node** bvh;
-
-    __device__ static hitable*
-    Transform(hitable* geometry, const vec3& offset = {0}, float rotateYAngle = 0)
-    {
-        return new translate(new rotate_y(geometry, rotateYAngle), offset);
-    }
-
-    __global__ static void CreateWorld(class camera** const camera,
-                                       hitable** const      geometries,
-                                       material** const     materials,
-                                       bvh_node** const     bvh)
-    {
-        if (threadIdx.x != 0 && blockIdx.x != 0) { return; }
-
-        // create camera
-        auto  dist_to_focus = 10.0;
-        auto  aperture      = 0.0;
-        auto  vfov          = 40.0;
-        float time0 = 0.0, time1 = 1.0;
-        camera[0] = new class camera(lookfrom, lookat, vec3::worldUp, vfov, aspectRatio, aperture,
-                                     dist_to_focus, time0, time1);
-
-        // create materials
-        auto* red_mat    = new lambertian(new const_texture(vec3(0.65, 0.05, 0.05)));
-        auto* white_mat  = new lambertian(new const_texture(vec3(0.73, 0.73, 0.73)));
-        auto* green_mat  = new lambertian(new const_texture(vec3(0.12, 0.45, 0.15)));
-        auto* light_mat  = new diffuse_light(new const_texture(vec3(15.0)));
-        int   mat        = 0;
-        materials[mat++] = red_mat;
-        materials[mat++] = white_mat;
-        materials[mat++] = green_mat;
-        materials[mat++] = light_mat;
-
-        // create geometry
-        int geom           = 0;
-        geometries[geom++] = new yz_rect(0, 555, 0, 555, 555, green_mat);
-        geometries[geom++] = new yz_rect(0, 555, 0, 555, 0, red_mat);
-        geometries[geom++] = new xz_rect(0, 555, 0, 555, 0, white_mat);
-        geometries[geom++] = new xy_rect(0, 555, 0, 555, 555, white_mat);
-        geometries[geom++] = new xz_rect(0, 555, 0, 555, 555, white_mat);
-        // 2 box
-        auto* dieletric = new sphere(vec3(210, 100, 150), 80, new dielectric(1.5));
-        auto* volume =
-            new constant_medium(dieletric, 0.02, new const_texture(vec3(0, 0, 0.8)), RNDSTATE);
-        geometries[geom++] = new SSS_volume(dieletric, volume);
-        geometries[geom++] =
-            Transform(new box(vec3(265, 0, 295), vec3(430, 330, 460), white_mat), vec3(0), -45.0f);
-
-        // light
-        geometries[geom++] = new flip_face(new xz_rect(213, 343, 227, 332, 554, light_mat));
-
-        // create bvh
-        //  we are not going to use BVH right now
-        //  bvh             = new bvh_node(*geometries, 0, 1, randState);
-    }
 };
+
+// ANCHOR - RTRenderer---------------------------------------------------------------------------
+
+__device__ static inline vec3 DefaultToneMappingFunc(const vec3& x)
+{
+    return x.gamma_correction();
+}
+
+__device__ vec3 rayColor(const ray&   r,
+                         hitable*     world,
+                         curandState* randState,
+                         const vec3&  background = {0})
+{
+    ray  cur_ray         = r;
+    vec3 cur_attenuation = vec3(1);
+    for (int i = 0; i < maxDepth; i++)
+    {
+        hit_record rec;
+        if (world->hit(cur_ray, 0.001f, FLT_MAX, rec))
+        {
+            ray  scattered;
+            vec3 attenuation;
+
+            vec3 emitted = rec.mat_ptr->emitted(rec.u, rec.v, rec.p);
+            if (dot(cur_ray.direction(), rec.normal) > 0) { emitted = vec3{0}; }
+
+            if (rec.mat_ptr->scatter(cur_ray, rec, attenuation, scattered, randState))
+            {
+                cur_attenuation *= attenuation;
+                cur_ray = scattered;
+            }
+            else
+            {
+                return cur_attenuation * emitted;  // 自发光材质，没有scatter
+            }
+        }
+        else  // sky light
+        {
+            vec3  unit_direction = unit_vector(cur_ray.direction());
+            float t              = 0.5f * (unit_direction.y() + 1.0f);
+            vec3  sky_light      = (1.0f - t) * vec3(1.0, 1.0, 1.0) + t * vec3(0.5, 0.7, 1.0);
+
+            // return cur_attenuation * (background + sky_light * 0.05);
+            return cur_attenuation * background;
+        }
+    }
+    return vec3(0);  // exceeded recursion
+}
+
+__global__ void _StandardRender(ImageBuffer<float>* const renderTarget,
+                                Scene* const              scene,
+                                curandState* const        randStatePerPixel)
+{
+    int i = threadIdx.x + blockIdx.x * blockDim.x;
+    int j = threadIdx.y + blockIdx.y * blockDim.y;
+    if ((i >= imageWidth) || (j >= imageHeight)) { return; }
+    int pixel_index = j * imageWidth + i;
+
+    auto* randState = randStatePerPixel + pixel_index;
+
+    vec3 col(0);
+    auto geometries = scene->GetHittableList();
+    for (int s = 0; s < SPP; s++)
+    {
+        float u = float(i + curand_uniform(randState)) / float(imageWidth);
+        float v = float(j + curand_uniform(randState)) / float(imageHeight);
+        ray   r = scene->GetCamera()->get_ray(u, v, randState);
+        col += rayColor(r, &geometries, randState);
+    }
+
+    reinterpret_cast<vec3*>(renderTarget->GetDeviceData())[pixel_index] =
+        DefaultToneMappingFunc(col / float(SPP));  // Tone Mapping
+}
 
 /**
  * @brief
@@ -612,7 +707,7 @@ public:
     {
         std::cout << "RTRenderer(): RTRenderer initlization." << std::endl;
     }
-    ~RTRenderer()
+    __host__ ~RTRenderer()
     {
         delete scene;
         delete gBufferPool;
@@ -621,104 +716,23 @@ public:
     __host__ Scene*       GetScene() const { return scene; }
     __host__ GBufferPool* GetGBufferPool() const { return gBufferPool; }
 
-    __host__ void StandardRender(ImageBuffer<float>* const renderTarget) const
+    void StandardRender(ImageBuffer<float>* const renderTarget) const
     {
-        _StandardRender<<<blocks, threads>>>(renderTarget, scene);
+        auto* randStatePerPixel = Curand::GetInstance()->GetCurandStatePerPixel();
+        _StandardRender<<<blocks, threads>>>(renderTarget, scene, randStatePerPixel);
         checkCudaErrors(cudaGetLastError());
         checkCudaErrors(cudaDeviceSynchronize());
-        // ToneMapping<<<blocks, threads>>>(renderTarget);
-        // checkCudaErrors(cudaGetLastError());
-        // checkCudaErrors(cudaDeviceSynchronize());
     }
 
 private:
     Scene*       scene;
     GBufferPool* gBufferPool;
 
-    __global__ static void RenderGBuffer();
-
-    __device__ static inline vec3 DefaultToneMappingFunc(const vec3& x)
-    {
-        return x.gamma_correction();
-    }
-
-    __global__ static void ToneMapping(ImageBuffer<float>* const renderTarget,
-                                       ToneMappingFuncPtr        func = DefaultToneMappingFunc)
-    {
-        int i = threadIdx.x + blockIdx.x * blockDim.x;
-        int j = threadIdx.y + blockIdx.y * blockDim.y;
-        if ((i >= imageWidth) || (j >= imageHeight)) { return; }
-        int pixel_index = j * imageWidth + i;
-
-        auto* fb        = reinterpret_cast<vec3*>(renderTarget->GetDeviceData());
-        fb[pixel_index] = func(fb[pixel_index]);
-    }
-
-    __global__ static void TemporalAA();
-
-    __global__ static void _StandardRender(ImageBuffer<float>* const renderTarget,
-                                           Scene* const              scene)
-    {
-        int i = threadIdx.x + blockIdx.x * blockDim.x;
-        int j = threadIdx.y + blockIdx.y * blockDim.y;
-        if ((i >= imageWidth) || (j >= imageHeight)) { return; }
-        int pixel_index = j * imageWidth + i;
-
-        auto* randState = RNDPPSTATE + pixel_index;
-
-        vec3 col(0);
-        auto geometries = scene->GetHittableList();
-        for (int s = 0; s < SPP; s++)
-        {
-            float u = float(i + curand_uniform(randState)) / float(imageWidth);
-            float v = float(j + curand_uniform(randState)) / float(imageHeight);
-            ray   r = scene->GetCamera()->get_ray(u, v, randState);
-            col += rayColor(r, &geometries, randState);
-        }
-
-        reinterpret_cast<vec3*>(renderTarget->GetDeviceData())[pixel_index] =
-            DefaultToneMappingFunc(col / float(SPP));  // Tone Mapping
-    }
-
-    __device__ static vec3
-    rayColor(const ray& r, hitable* world, curandState* randState, const vec3& background = {0})
-    {
-        ray  cur_ray         = r;
-        vec3 cur_attenuation = vec3(1);
-        for (int i = 0; i < maxDepth; i++)
-        {
-            hit_record rec;
-            if (world->hit(cur_ray, 0.001f, FLT_MAX, rec))
-            {
-                ray  scattered;
-                vec3 attenuation;
-
-                vec3 emitted = rec.mat_ptr->emitted(rec.u, rec.v, rec.p);
-                if (dot(cur_ray.direction(), rec.normal) > 0) { emitted = vec3{0}; }
-
-                if (rec.mat_ptr->scatter(cur_ray, rec, attenuation, scattered, randState))
-                {
-                    cur_attenuation *= attenuation;
-                    cur_ray = scattered;
-                }
-                else
-                {
-                    return cur_attenuation * emitted;  // 自发光材质，没有scatter
-                }
-            }
-            else  // sky light
-            {
-                vec3  unit_direction = unit_vector(cur_ray.direction());
-                float t              = 0.5f * (unit_direction.y() + 1.0f);
-                vec3  sky_light      = (1.0f - t) * vec3(1.0, 1.0, 1.0) + t * vec3(0.5, 0.7, 1.0);
-
-                // return cur_attenuation * (background + sky_light * 0.05);
-                return cur_attenuation * background;
-            }
-        }
-        return vec3(0);  // exceeded recursion
-    }
+    // __global__ static void RenderGBuffer();
+    // __global__ static void TemporalAA();
 };
+
+// ANCHOR - SVGFApplication----------------------------------------------------------------------
 
 /**
  * @brief
@@ -736,6 +750,7 @@ public:
     {
         delete renderer;
         delete scene;
+        delete gBufferPool;
     }
 
     __host__ void Run()
@@ -803,7 +818,7 @@ private:
     __host__ void PostSVGFPocess();
 };
 
-int main(int argc, char** argv)
+__host__ int main(int argc, char** argv)
 {
     try
     {
