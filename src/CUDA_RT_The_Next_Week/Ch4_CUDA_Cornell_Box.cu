@@ -3,7 +3,9 @@
 
 // cpp
 #include <chrono>
+#include <cstdlib>
 #include <cuda_runtime_api.h>
+#include <driver_types.h>
 #include <fstream>
 #include <iostream>
 #include <memory>
