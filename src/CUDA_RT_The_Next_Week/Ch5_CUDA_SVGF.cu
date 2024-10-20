@@ -22,6 +22,7 @@
 // c++
 #include <chrono>
 #include <functional>
+#include <initializer_list>
 #include <iostream>
 #include <map>
 #include <mutex>
@@ -40,6 +41,7 @@
 #include <curand_uniform.h>
 
 // user
+#define USE_GLM
 #include "raytracinginoneweekendincuda/box.h"
 #include "raytracinginoneweekendincuda/bvh.h"
 #include "raytracinginoneweekendincuda/camera.h"
@@ -59,6 +61,7 @@
 // 3rdparty
 #define STB_IMAGE_IMPLEMENTATION
 #define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "glm/glm.hpp"
 #include "stb_image.h"
 #include "stb_image_write.h"
 
@@ -89,15 +92,16 @@ constexpr int numPixels   = imageWidth * imageHeight;
 constexpr float aspectRatio = (float)imageWidth / (float)imageHeight;
 const vec3      lookfrom(278, 278, -800);
 const vec3      lookat(278, 278, 0);
-const int       SPP      = 128;
-const int       maxDepth = 50;
+const int       SPP       = 128;
+const int       maxDepth  = 50;
+const float     maxZDepth = 1500.0f;
 // cuda concurrency
 const dim3   threads(8, 8);
 const dim3   blocks(imageWidth / threads.x + 1, imageHeight / threads.y + 1);
 const size_t curandSeed = 3777;
 std::mutex   CurandMutex;
 // SVGF core
-const int gBufferHistorySize = 5;
+const int gBufferHistorySize = 2;
 // image save
 const std::string savePath = "out.png";
 
@@ -119,6 +123,28 @@ initCurandStatePerPixel(int imageWidth, int imageHeight, curandState* _pCurandSt
 }
 
 /**
+ * @brief Timer
+ *
+ */
+class Timer {
+public:
+    __host__ Timer(std::string _message = "") : message(_message)
+    {
+        startTime = std::chrono::system_clock::now();
+    }
+    __host__ ~Timer()
+    {
+        auto stop     = std::chrono::system_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(stop - startTime);
+        std::cout << "Timer(): " << message << " Time:  " << duration.count() / 1000.0f << " s\n";
+    }
+
+private:
+    std::chrono::time_point<std::chrono::system_clock> startTime;
+    std::string                                        message;
+};
+
+/**
  * @brief Curand
  *
  */
@@ -134,7 +160,14 @@ public:
         return singleton;
     }
 
-    __host__ void DestoryInstance() { delete singleton; }
+    __host__ void DestoryInstance()
+    {
+        if (singleton != nullptr)
+        {
+            delete singleton;
+            singleton = nullptr;
+        }
+    }
 
     __host__ curandState* GetCurandState() const { return pCurandState; }
     __host__ curandState* GetCurandStatePerPixel() const { return pCurandStatePerPixel; }
@@ -174,6 +207,7 @@ private:
         checkCudaErrors(cudaGetLastError());
         checkCudaErrors(cudaDeviceSynchronize());
     }
+
     __host__ ~Curand()
     {
         checkCudaErrors(cudaFree(pCurandState));
@@ -355,9 +389,11 @@ public:
     enum struct GBufferType : int {
         FullRendering = 3,
         Albedo        = 3,
-        Irradiance    = 1,
+        Irrandiance   = 3,
+        Position      = 3,
         Depth         = 1,
         Normal        = 3,
+        UV            = 3,
         Motion        = 3,
     };
 
@@ -431,6 +467,8 @@ private:
     // Irradiance = source / texture albedo
 };
 
+using GBufferType = GBufferPool::GBufferType;
+
 // ANCHOR - Scene---------------------------------------------------------------------------
 
 __device__ hitable* Transform(hitable* geometry, const vec3& offset = {0}, float rotateYAngle = 0)
@@ -448,6 +486,7 @@ __global__ static void CreateWorld(class camera** const camera,
     if (threadIdx.x != 0 && blockIdx.x != 0) { return; }
 
     // create camera
+    printf("create camera\n");
     vec3  lookfrom(278, 278, -800);
     vec3  lookat(278, 278, 0);
     vec3  vup(0, 1, 0);
@@ -456,10 +495,12 @@ __global__ static void CreateWorld(class camera** const camera,
     auto  vfov          = 40.0;
     auto  aspectRatio   = (float)imageWidth / (float)imageHeight;
     float time0 = 0.0, time1 = 1.0;
-    camera[0] = new class camera(lookfrom, lookat, vup, vfov, aspectRatio, aperture, dist_to_focus,
-                                 time0, time1);
+    camera[0] = new class MovingCamera(lookfrom, lookfrom, lookat, lookat, vup, vfov, aspectRatio,
+                                       aperture, dist_to_focus, time0, time1);
+    // TODO - 设置相机的运动
 
     // create materials
+    printf("create material\n");
     auto* red_mat    = new lambertian(new const_texture(vec3(0.65, 0.05, 0.05)));
     auto* white_mat  = new lambertian(new const_texture(vec3(0.73, 0.73, 0.73)));
     auto* green_mat  = new lambertian(new const_texture(vec3(0.12, 0.45, 0.15)));
@@ -471,6 +512,7 @@ __global__ static void CreateWorld(class camera** const camera,
     materials[mat++] = light_mat;
 
     // create geometry
+    printf("create geometry\n");
     int geom           = 0;
     geometries[geom++] = new yz_rect(0, 555, 0, 555, 555, green_mat);
     geometries[geom++] = new yz_rect(0, 555, 0, 555, 0, red_mat);
@@ -491,13 +533,15 @@ __global__ static void CreateWorld(class camera** const camera,
     // hitable_list
     geometryList[0] = new hitable_list(geometries, geom);
 
+    printf("finish!\n");
+
     // create bvh
     //  we are not going to use BVH right now
     //  bvh             = new bvh_node(*geometries, 0, 1, randState);
 }
 
 /**
- * @brief
+ * @brief Scene
  *
  */
 class Scene {
@@ -526,7 +570,9 @@ public:
         checkCudaErrors(cudaGetLastError());
         checkCudaErrors(cudaDeviceSynchronize());
     }
+
     __host__ ~Scene()
+    // FIXME - 这里可能有问题，geometries和materials都是指向gpu内存的指针，可能会越界访问
     {
         for (int i = 0; i < numGeometries; i++)
         {
@@ -561,7 +607,7 @@ private:
 
 // ANCHOR - RTRenderer---------------------------------------------------------------------------
 
-__device__ static inline vec3 DefaultToneMappingFunc(const vec3& x)
+__device__ inline vec3 DefaultToneMappingFunc(const vec3& x)
 {
     return x.gamma_correction();
 }
@@ -607,13 +653,13 @@ __device__ vec3 rayColor(const ray&   r,
     return vec3(0);  // exceeded recursion
 }
 
-__global__ void _StandardRender(int                width,
-                                int                height,
-                                int                spp,
-                                vec3* const        frameBuffer,
-                                camera** const     camera,
-                                hitable_list**     geometryList,
-                                curandState* const randStatePerPixel)
+__global__ void _StandardRender(int                  width,
+                                int                  height,
+                                int                  spp,
+                                vec3* const          frameBuffer,
+                                camera** const       camera,
+                                hitable_list** const geometryList,
+                                curandState* const   randStatePerPixel)
 {
     int i = threadIdx.x + blockIdx.x * blockDim.x;
     int j = threadIdx.y + blockIdx.y * blockDim.y;
@@ -634,13 +680,149 @@ __global__ void _StandardRender(int                width,
     frameBuffer[pixel_index] = DefaultToneMappingFunc(col / float(spp));  // Tone Mapping
 }
 
+__device__ vec3 PTRayColor(const ray&   r,
+                           hitable*     world,
+                           vec3         cameraOrigin,
+                           vec3         cameraLookDir,
+                           float        maxZDepth,
+                           int          pixelIndex,
+                           vec3* const  albedoFB,
+                           vec3* const  positionFB,
+                           float* const depthFB,
+                           vec3* const  normalFB,
+                           vec3* const  uvFB,
+                           curandState* randState,
+                           const vec3&  background = {0})
+{
+    ray  cur_ray         = r;
+    vec3 cur_attenuation = vec3(1);
+    for (int i = 0; i < maxDepth; i++)
+    {
+        hit_record rec;
+
+        // status
+        bool hit_anything = world->hit(cur_ray, 0.001f, FLT_MAX, rec);
+        bool isScatter;
+        ray  scattered;
+        vec3 attenuation;
+        vec3 emitted;
+
+        if (hit_anything)
+        {
+            emitted = rec.mat_ptr->emitted(rec.u, rec.v, rec.p);
+            if (dot(cur_ray.direction(), rec.normal) > 0) { emitted = vec3{0}; }
+
+            isScatter = rec.mat_ptr->scatter(cur_ray, rec, attenuation, scattered, randState);
+            if (isScatter)
+            {
+                cur_attenuation *= attenuation;
+                cur_ray = scattered;
+            }
+            else
+            {
+                return cur_attenuation * emitted;  // 自发光材质，没有scatter
+            }
+        }
+        else  // sky light
+        {
+            vec3  unit_direction = unit_vector(cur_ray.direction());
+            float t              = 0.5f * (unit_direction.y() + 1.0f);
+            vec3  sky_light      = (1.0f - t) * vec3(1.0, 1.0, 1.0) + t * vec3(0.5, 0.7, 1.0);
+
+            // return cur_attenuation * (background + sky_light * 0.05);
+            return cur_attenuation * background;
+        }
+
+        if (i == 0)  // first bounce
+        {
+            // albedo
+            if (hit_anything)
+            {
+                if (isScatter) { albedoFB[pixelIndex] = attenuation; }       // none emissive
+                else { albedoFB[pixelIndex] = emitted.make_unit_vector(); }  // emissive
+            }
+            else { albedoFB[pixelIndex] = vec3(0); }
+
+            positionFB[pixelIndex] = hit_anything ? rec.p : vec3(0);
+            depthFB[pixelIndex] =
+                hit_anything ? dot(cameraLookDir, rec.p - cameraOrigin) / maxZDepth : 1.0f;
+            normalFB[pixelIndex] = hit_anything ? rec.normal : vec3(0);
+            uvFB[pixelIndex]     = hit_anything ? vec3(rec.u, rec.v, 0) : vec3(0);
+        }
+    }
+    return vec3(0);  // exceeded recursion
+}
+
+__device__ vec3 WorldPos2ScreenPos(const mat4& MVP_T, const vec4& worldPos)
+{
+    vec4 ans = {dot(MVP_T.e[0], worldPos), dot(MVP_T.e[1], worldPos), dot(MVP_T.e[2], worldPos),
+                dot(MVP_T.e[3], worldPos)};
+    return {ans.e[0] / ans.e[3], ans.e[1] / ans.e[3], ans.e[2] / ans.e[3]};
+}
+
+__global__ void _PathTracing(int                  width,
+                             int                  height,
+                             float                maxZDepth,
+                             vec3* const          fullRenderingFB,
+                             vec3* const          albedoFB,
+                             vec3* const          irradianceFB,
+                             vec3* const          positionFB,
+                             float* const         depthFB,
+                             vec3* const          normalFB,
+                             vec3* const          uvFB,
+                             vec3* const          motionFB,
+                             camera** const       camera,
+                             hitable_list** const geometryList,
+                             curandState* const   randStatePerPixel)
+{
+    int i = threadIdx.x + blockIdx.x * blockDim.x;
+    int j = threadIdx.y + blockIdx.y * blockDim.y;
+    if ((i >= width) || (j >= height)) { return; }
+    int pixel_index = j * width + i;
+
+    auto* randState = randStatePerPixel + pixel_index;
+
+    vec3      col(0);
+    const int spp = 1;
+    for (int s = 0; s < spp; s++)
+    {
+        float u = float(i + curand_uniform(randState)) / float(width);
+        float v = float(j + curand_uniform(randState)) / float(height);
+        ray   r = camera[0]->get_ray(u, v, randState);
+        col += PTRayColor(r,                           //
+                          *geometryList,               //
+                          camera[0]->CameraOrigin(),   //
+                          camera[0]->CameraLookDir(),  //
+                          maxZDepth,                   //
+                          pixel_index,                 //
+                          albedoFB,                    //
+                          positionFB,                  //
+                          depthFB,                     //
+                          normalFB,                    //
+                          uvFB,                        //
+                          randState);                  //
+    }
+
+    vec3 renderColor = col / float(spp);
+    // fullRenderingFB
+    fullRenderingFB[pixel_index] = DefaultToneMappingFunc(renderColor);  // Tone Mapping
+    // irradianceFB
+    irradianceFB[pixel_index] = renderColor / albedoFB[pixel_index];
+    // motionFB, prevPositionFB
+    // TODO - 这一帧的屏幕空间坐标减去上一帧的坐标
+    mat4 MVP_T            = ((MovingCamera*)camera[0])->GetMVP_T();
+    mat4 prevMVP_T        = ((MovingCamera*)camera[0])->GetPrevMVP_T();
+    vec3 screenPos        = WorldPos2ScreenPos(MVP_T, vec4(positionFB[pixel_index], 1.0f));
+    vec3 prevScreenPos    = WorldPos2ScreenPos(prevMVP_T, vec4(positionFB[pixel_index], 1.0f));
+    motionFB[pixel_index] = screenPos - prevScreenPos;
+}
+
 /**
  * @brief
  *
  */
 class RTRenderer {
 public:
-    using ToneMappingFunc    = std::function<vec3(const vec3&)>;
     using ToneMappingFuncPtr = vec3 (*)(const vec3&);
 
     __host__ RTRenderer(Scene* _scene, GBufferPool* _gBufferPool)
@@ -657,7 +839,7 @@ public:
     __host__ Scene*       GetScene() const { return scene; }
     __host__ GBufferPool* GetGBufferPool() const { return gBufferPool; }
 
-    void StandardRender(ImageBuffer<float>* const renderTarget) const
+    __host__ void StandardRender(ImageBuffer<float>* const renderTarget) const
     {
         auto*  randStatePerPixel = Curand::GetInstance()->GetCurandStatePerPixel();
         auto*  frameBuffer       = reinterpret_cast<vec3*>(renderTarget->GetUnifiedMenData());
@@ -674,12 +856,36 @@ public:
         checkCudaErrors(cudaDeviceSynchronize());
     }
 
+    __host__ void PathTracing(std::map<GBufferType, ImageBuffer<float>*> gBuffermap) const
+    {
+        auto*  randStatePerPixel = Curand::GetInstance()->GetCurandStatePerPixel();
+        auto** camera            = scene->GetCamera();
+        auto** geomtryList       = scene->GetGeometryList();
+
+        _PathTracing<<<blocks, threads>>>(
+            imageWidth,   //
+            imageHeight,  //
+            maxZDepth,    //
+            reinterpret_cast<vec3*>(
+                gBuffermap[GBufferType::FullRendering]->GetUnifiedMenData()),                    //
+            reinterpret_cast<vec3*>(gBuffermap[GBufferType::Albedo]->GetUnifiedMenData()),       //
+            reinterpret_cast<vec3*>(gBuffermap[GBufferType::Irrandiance]->GetUnifiedMenData()),  //
+            reinterpret_cast<vec3*>(gBuffermap[GBufferType::Position]->GetUnifiedMenData()),     //
+            reinterpret_cast<float*>(gBuffermap[GBufferType::Depth]->GetUnifiedMenData()),       //
+            reinterpret_cast<vec3*>(gBuffermap[GBufferType::Normal]->GetUnifiedMenData()),       //
+            reinterpret_cast<vec3*>(gBuffermap[GBufferType::UV]->GetUnifiedMenData()),           //
+            reinterpret_cast<vec3*>(gBuffermap[GBufferType::Motion]->GetUnifiedMenData()),       //
+            camera,                                                                              //
+            geomtryList,                                                                         //
+            randStatePerPixel                                                                    //
+        );
+        checkCudaErrors(cudaGetLastError());
+        checkCudaErrors(cudaDeviceSynchronize());
+    }
+
 private:
     Scene*       scene;
     GBufferPool* gBufferPool;
-
-    // __global__ static void RenderGBuffer();
-    // __global__ static void TemporalAA();
 };
 
 // ANCHOR - SVGFApplication----------------------------------------------------------------------
@@ -693,7 +899,17 @@ public:
     __host__ SVGFApplication() : scene(new Scene())
     {
         std::cout << "SVGFApplication(): SVGFApplication initlization." << std::endl;
-        gBufferPool = new GBufferPool({GBufferPool::GBufferType::FullRendering});
+        std::set<GBufferType> gBufferTypes = {
+            GBufferType::FullRendering,  //
+            GBufferType::Albedo,         //
+            GBufferType::Irrandiance,    //
+            GBufferType::Position,       //
+            GBufferType::Depth,          //
+            GBufferType::Normal,         //
+            GBufferType::UV,             //
+            GBufferType::Motion          //
+        };
+        gBufferPool = new GBufferPool(gBufferTypes);
         renderer    = new RTRenderer(scene, gBufferPool);
     }
     __host__ ~SVGFApplication()
@@ -707,9 +923,10 @@ public:
     {
         StandardRender();
 
-        // PreSVGFPocess();
-        // SVGFPipline();
-        // PostSVGFPocess();
+        // SVGF
+        PathTracing();
+        Reconstruction();
+        PostProcessing();
     }
 
 private:
@@ -722,22 +939,17 @@ private:
         // import an image as a test
         auto* earth_img = new ImageBuffer<unsigned char>("earth.jpg");
 
-        std::cout << "Rendering a " << imageWidth << "x" << imageHeight << " image with " << SPP
-                  << " samples per pixel ";
+        std::cout << "StandardRender(): " << "Rendering a " << imageWidth << "x" << imageHeight
+                  << " image with " << SPP << " samples per pixel ";
         std::cout << "in " << threads.x << "x" << threads.y << " blocks.\n";
 
         // start to render
-        auto renderTarget = GBufferPool::GBufferType::FullRendering;
+        auto renderTarget = GBufferType::FullRendering;
         {
-            auto start = std::chrono::system_clock::now();
-
-            auto gBufferMap = gBufferPool->PopFrontBufferPtr();
+            Timer timer("StandardRender()");
+            auto  gBufferMap = gBufferPool->PopFrontBufferPtr();
             renderer->StandardRender(gBufferMap.find(renderTarget)->second);
             gBufferPool->UpdateGBufferPool(gBufferMap);
-
-            auto stop     = std::chrono::system_clock::now();
-            auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(stop - start);
-            std::cout << "Time:  " << duration.count() / 1000.0f << " s\n";
         }
 
         //  Output FB as Image
@@ -745,18 +957,54 @@ private:
             auto frameBuffer = gBufferPool->GetBackBufferPtr().find(renderTarget)->second;
             frameBuffer->Save(savePath);
         }
+
+        delete earth_img;  // release image
+
+        std::cout << "StandardRender(): Rendering Finished!" << std::endl;
     }
 
-    __host__ void PreSVGFPocess();
-
-    __host__ void SVGFPipline()
+    __host__ void PathTracing()
     {
-        //......
-        // ReconstructionFilter();
-        //......
+        std::cout << "Path Tracing(): start to generate GBuffer" << std::endl;
+
+        // start to render
+        {
+            // TODO - 设置摄像机时间
+
+            Timer timer("PathTracing()");
+            auto  gBufferMap = gBufferPool->PopFrontBufferPtr();
+            renderer->PathTracing(gBufferMap);
+            gBufferPool->UpdateGBufferPool(gBufferMap);
+            // TODO - 第一帧的时候没有prevPotion
+        }
+
+        //  Output FB as Image
+        {
+            auto gBufferMap = gBufferPool->GetBackBufferPtr();
+
+            // fullRendering
+            gBufferMap.find(GBufferType::FullRendering)
+                ->second->Save("PathTracing_FullRendering.png");
+            // albedo
+            gBufferMap.find(GBufferType::Albedo)->second->Save("PathTracing_Albedo.png");
+            // Irradiance
+            gBufferMap.find(GBufferType::Irrandiance)->second->Save("PathTracing_Irradiance.png");
+            // normal
+            gBufferMap.find(GBufferType::Normal)->second->Save("PathTracing_Normal.png");
+            // depth
+            gBufferMap.find(GBufferType::Depth)->second->Save("PathTracing_Depth.png");
+            // position
+            gBufferMap.find(GBufferType::Position)->second->Save("PathTracing_Position.png");
+            // uv
+            gBufferMap.find(GBufferType::UV)->second->Save("PathTracing_UV.png");
+            // motion
+            gBufferMap.find(GBufferType::Motion)->second->Save("PathTracing_Motion.png");
+        }
+
+        std::cout << "PathTracing(): Rendering Finished!" << std::endl;
     }
 
-    __host__ void ReconstructionFilter()
+    __host__ void Reconstruction()
     {
         // Input Images: Motion, Color, Normal, Depth, Mesh ID
         // History Input Images
@@ -765,7 +1013,7 @@ private:
         // Wavelet Filtering
     }
 
-    __host__ void PostSVGFPocess();
+    __host__ void PostProcessing() {}
 };
 
 __host__ int main(int argc, char** argv)

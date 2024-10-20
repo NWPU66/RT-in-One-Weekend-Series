@@ -52,7 +52,7 @@ public:
         return {::floor(e[0]), ::floor(e[1]), ::floor(e[2])};
     }
     __host__ __device__ inline vec3 abs() const { return {::abs(e[0]), ::abs(e[1]), ::abs(e[2])}; }
-    __host__ __device__ inline void make_unit_vector();
+    __host__ __device__ inline vec3 make_unit_vector();
     __host__ __device__ inline vec3 gamma_correction() const;
 
     __host__ __device__ inline float min_value() const { return fmin(e[0], fmin(e[1], e[2])); }
@@ -76,12 +76,10 @@ inline std::ostream& operator<<(std::ostream& os, const vec3& t)
     return os;
 }
 
-__host__ __device__ inline void vec3::make_unit_vector()
+__host__ __device__ inline vec3 vec3::make_unit_vector()
 {
     float k = 1.0 / sqrt(e[0] * e[0] + e[1] * e[1] + e[2] * e[2]);
-    e[0] *= k;
-    e[1] *= k;
-    e[2] *= k;
+    return {e[0] * k, e[1] * k, e[2] * k};
 }
 
 __host__ __device__ inline vec3 operator+(const vec3& v1, const vec3& v2)
@@ -225,5 +223,58 @@ __host__ __device__ inline vec3 min(const vec3& a, const vec3& b)
 {
     return vec3(fmin(a.e[0], b.e[0]), fmin(a.e[1], b.e[1]), fmin(a.e[2], b.e[2]));
 }
+
+class vec4 {
+public:
+    __host__ __device__ vec4() {}
+    __host__ __device__ vec4(float x) : e{x, x, x, x} {}
+    __host__ __device__ vec4(float x, float y, float z, float w) : e{x, y, z, w} {}
+    __host__ __device__ vec4(vec3 x, float y) : e{x.e[0], x.e[1], x.e[2], y} {}
+
+public:
+    float e[4];
+};
+
+class mat4 {
+public:
+    __host__ __device__ mat4() {}
+    __host__ __device__ mat4(float x) : e{{x, 0, 0, 0}, {0, x, 0, 0}, {0, 0, x, 0}, {0, 0, 0, x}} {}
+    __host__ __device__ mat4(vec4 x, vec4 y, vec4 z, vec4 w) : e{x, y, z, w} {}
+
+public:
+    vec4 e[4];
+};
+
+__host__ __device__ inline float dot(const vec4& a, const vec4& b)
+{
+    return a.e[0] * b.e[0] + a.e[1] * b.e[1] + a.e[2] * b.e[2] + a.e[3] * b.e[3];
+}
+
+#define USE_GLM
+#ifdef USE_GLM
+#    include "glm/ext/matrix_transform.hpp"
+#    include "glm/glm.hpp"
+#    include "glm/gtc/matrix_transform.hpp"
+#    include "glm/gtc/type_ptr.hpp"
+
+__host__ glm::vec3 vector3(const vec3& x)
+{
+    return {x.x(), x.y(), x.z()};
+}
+
+__host__ vec3 vector3(const glm::vec3& x)
+{
+    return {x.x, x.y, x.z};
+}
+
+__host__ mat4 matrix4(const glm::mat4& x)
+{
+    auto* data = glm::value_ptr(x);
+    return {{*data, *(data + 1), *(data + 2), *(data + 3)},
+            {*(data + 4), *(data + 5), *(data + 6), *(data + 7)},
+            {*(data + 8), *(data + 9), *(data + 10), *(data + 11)},
+            {*(data + 12), *(data + 13), *(data + 14), *(data + 15)}};
+}
+#endif
 
 #endif
